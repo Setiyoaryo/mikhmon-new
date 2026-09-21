@@ -27,27 +27,41 @@ if (!isset($_SESSION["mikhmon"])) {
 
   if (isset($_POST['save'])) {
 
-    $suseradm = ($_POST['useradm']);
-    $spassadm = encrypt($_POST['passadm']);
-    $logobt = ($_POST['logobt']);
-    $qrbt = ($_POST['qrbt']);
+    // The username lands inside a single-quoted PHP string in include/config.php,
+    // so a quote in it would break config.php and blank the whole UI. The
+    // password is encrypt()ed first, so it is base64 and cannot contain one.
+    $suseradm = mikhmon_cfg_clean(isset($_POST['useradm']) ? $_POST['useradm'] : '');
+    if ($suseradm === '') {
+      $suseradm = $useradm; // never store a nameless admin
+    }
+    $spassadm = encrypt(is_string($_POST['passadm']) ? $_POST['passadm'] : '');
+
+    // quickbt.php holds $qrbt inside a DOUBLE-quoted string, so only the
+    // enable/disable values the select offers are allowed through.
+    $qrbt = (isset($_POST['qrbt']) && $_POST['qrbt'] === 'enable') ? 'enable' : 'disable';
 
     $cari = array('1' => "mikhmon<|<$useradm", "mikhmon>|>$passadm");
     $ganti = array('1' => "mikhmon<|<$suseradm", "mikhmon>|>$spassadm");
 
-    for ($i = 1; $i < 3; $i++) {
-      $file = file("./include/config.php");
-      $content = file_get_contents("./include/config.php");
-      $newcontent = str_replace((string)$cari[$i], (string)$ganti[$i], "$content");
-      file_put_contents("./include/config.php", "$newcontent");
+    // Read once, write once, and check the result: the old loop rewrote the
+    // file twice and left it half updated if anything failed in between.
+    $content = @file_get_contents("./include/config.php");
+    if ($content !== false) {
+      foreach ($cari as $i => $needle) {
+        $content = str_replace((string) $needle, (string) $ganti[$i], $content);
+      }
+      mikhmon_cfg_write("./include/config.php", $content);
     }
 
-  
-  $gen = '<?php $qrbt="' . $qrbt . '";?>';
-          $key = './include/quickbt.php';
-          $handle = fopen($key, 'w') or die('Cannot open file:  ' . $key);
-          $data = $gen;
-          fwrite($handle, $data);
+    // Same treatment for quickbt.php: unique temporary file plus rename, so a
+    // concurrent save cannot publish a truncated file (an empty quickbt.php
+    // breaks every page that includes it).
+    $gen = '<?php $qrbt="' . $qrbt . '";?>';
+    $key = './include/quickbt.php';
+    $tmp = $key . '.' . getmypid() . '.' . mt_rand(100000, 999999) . '.tmp';
+    if (@file_put_contents($tmp, $gen) !== false && !@rename($tmp, $key)) {
+      @unlink($tmp);
+    }
     echo "<script>window.location='./admin.php?id=sessions'</script>";
   }
 

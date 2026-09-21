@@ -23,58 +23,145 @@ if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
 
-  if ($id == "settings" && explode("-",$router)[0] == "new") {
-    $data = '$data';
-    $f = fopen('./include/config.php', 'a');
-    fwrite($f, "\n'$'data['".$router."'] = array ('1'=>'".$router."!','".$router."@|@','".$router."#|#','".$router."%','".$router."^','".$router."&Rp','".$router."*10','".$router."(1','".$router.")','".$router."=10','".$router."@!@disable');");
-    fclose($f);
-    $search = "'$'data";
-    $replace = (string)"$data";
-    $file = file("./include/config.php");
-    $content = file_get_contents("./include/config.php");
-    $newcontent = str_replace((string)$search, (string)$replace, "$content");
-    file_put_contents("./include/config.php", "$newcontent");
-    echo "<script>window.location='./admin.php?id=settings&session=" . $router . "'</script>";
+  // $_GET yields null for a missing parameter, and null !== "" is true, so
+  // normalise both once here instead of comparing against null further down.
+  $session = isset($session) ? (string) $session : '';
+  $router = isset($router) ? (string) $router : '';
+
+  // -------------------------------------------------------------------------
+  // include/config.php keeps one router session per line and readcfg() reads it
+  // straight back, so both writers have to be careful:
+  //
+  //  1. Every value sits inside a single-quoted PHP string. A quote in the
+  //     session name or in a field like dnsname used to produce a parse error,
+  //     and a config.php that will not parse blanks the whole UI.
+  //  2. "Add Router" used to append a placeholder session on every visit and
+  //     then echo a second redirect to "session=" (because $currency had been
+  //     read from the old file), which won over the correct one and bounced
+  //     the browser back to the session list - the form could never be opened.
+  //     Those placeholders also piled up in the router list when abandoned.
+  //     No placeholder is written any more: the form renders from empty values
+  //     and the line is created once, on save.
+  //  3. The line is now rebuilt in one piece instead of being patched with
+  //     str_replace needles. With an empty session name those needles became
+  //     bare delimiters ("@|@", "#|#", "=") and rewrote every other router's
+  //     line; they could also match a longer session name.
+  //  4. Writes go through a temporary file and rename, and the result is
+  //     checked, so a failure cannot leave a truncated config.php behind.
+  // -------------------------------------------------------------------------
+
+  // The session name defined on a config.php line, or "" for any other line.
+  if (!function_exists('cfg_line_name')) {
+    function cfg_line_name($line)
+    {
+      $trimmed = ltrim($line);
+      if (strpos($trimmed, "\$data['") !== 0) {
+        return "";
+      }
+      $end = strpos($trimmed, "']", 7);
+      if ($end === false) {
+        return "";
+      }
+      return substr($trimmed, 7, $end - 7);
+    }
+  }
+
+  // One complete session line, built from already sanitised values.
+  if (!function_exists('cfg_line')) {
+    function cfg_line($name, $v)
+    {
+      return "\$data['" . $name . "'] = array ('1'=>'" . $name . "!" . $v['ip'] . "',"
+        . "'" . $name . "@|@" . $v['user'] . "',"
+        . "'" . $name . "#|#" . $v['pass'] . "',"
+        . "'" . $name . "%" . $v['hotspot'] . "',"
+        . "'" . $name . "^" . $v['dns'] . "',"
+        . "'" . $name . "&" . $v['currency'] . "',"
+        . "'" . $name . "*" . $v['reload'] . "',"
+        . "'" . $name . "(" . $v['iface'] . "',"
+        . "'" . $name . ")" . $v['infolp'] . "',"
+        . "'" . $name . "=" . $v['idleto'] . "',"
+        . "'" . $name . "@!@" . $v['livereport'] . "');";
+    }
+  }
+
+  $cfgfile = './include/config.php';
+  $cfgredirect = false;
+  $cfgIsNew = (isset($session) && explode("-", (string) $session)[0] == "new");
+  $cfgExists = false;
+  $cfgLines = array();
+  $cfgRaw = @file_get_contents($cfgfile);
+  if ($cfgRaw !== false) {
+    $cfgLines = preg_split("/\r\n|\n|\r/", $cfgRaw);
+    foreach ($cfgLines as $cfgline) {
+      if ($session !== "" && cfg_line_name($cfgline) === $session) {
+        $cfgExists = true;
+      }
+    }
   }
 
   if (isset($_POST['save'])) {
 
-    $siphost = (preg_replace('/\s+/', '', $_POST['ipmik']));
-    $suserhost = ($_POST['usermik']);
-    $spasswdhost = encrypt($_POST['passmik']);
-    $shotspotname = str_replace("'","",$_POST['hotspotname']);
-    $sdnsname = ($_POST['dnsname']);
-    $scurrency = ($_POST['currency']);
-    $sreload = ($_POST['areload']);
-    if ($sreload < 10) {
-      $sreload = 10;
+    $clean = 'mikhmon_cfg_clean';
+    $val = array(
+      'ip'         => $clean(preg_replace('/\s+/', '', isset($_POST['ipmik']) ? $_POST['ipmik'] : '')),
+      'user'       => $clean(isset($_POST['usermik']) ? $_POST['usermik'] : ''),
+      'pass'       => encrypt(is_string($_POST['passmik']) ? $_POST['passmik'] : ''), // base64
+      'hotspot'    => $clean(isset($_POST['hotspotname']) ? $_POST['hotspotname'] : ''),
+      'dns'        => $clean(isset($_POST['dnsname']) ? $_POST['dnsname'] : ''),
+      'currency'   => $clean(isset($_POST['currency']) ? $_POST['currency'] : ''),
+      'iface'      => $clean(isset($_POST['iface']) ? $_POST['iface'] : ''),
+      'idleto'     => $clean(isset($_POST['idleto']) ? $_POST['idleto'] : ''),
+      'livereport' => $clean(isset($_POST['livereport']) ? $_POST['livereport'] : ''),
+    );
+
+    // No form posts "infolp", so keep whatever is already stored instead of
+    // wiping the field on every save.
+    $val['infolp'] = is_string($_POST['infolp'])
+      ? implode(unpack("H*", $_POST['infolp']))
+      : mikhmon_cfg_clean($infolp);
+
+    $val['reload'] = (int) (isset($_POST['areload']) && is_numeric($_POST['areload']) ? $_POST['areload'] : 0);
+    if ($val['reload'] < 10) {
+      $val['reload'] = 10;
+    }
+
+    $sesname = mikhmon_cfg_name(isset($_POST['sessname']) ? $_POST['sessname'] : '');
+    if ($sesname === '') {
+      $sesname = ($session !== '') ? mikhmon_cfg_name($session) : 'router';
+    }
+
+    $written = false;
+
+    if ($cfgExists && $session !== '') {
+      // Editing an existing router: replace just that one line.
+      foreach ($cfgLines as $i => $cfgline) {
+        if (cfg_line_name($cfgline) === $session) {
+          $cfgLines[$i] = cfg_line($sesname, $val);
+        }
+      }
+      $written = mikhmon_cfg_write($cfgfile, rtrim(implode("\n", $cfgLines), "\r\n") . "\n");
     } else {
-      $sreload = $sreload;
+      // New router: append it. This is also the path taken when the URL has no
+      // session at all (the "Add Router" form posts back to itself).
+      $base = ($cfgRaw === false) ? '' : rtrim($cfgRaw, "\r\n");
+      $written = mikhmon_cfg_write($cfgfile, $base . "\n" . cfg_line($sesname, $val) . "\n");
     }
-    $siface = ($_POST['iface']);
-    $sinfolp = implode(unpack("H*", $_POST['infolp']));
-    //$sinfolp = encrypt($_POST['infolp']);
-    //$sinfolp = ($_POST['infolp']);
-    $sidleto = ($_POST['idleto']);
 
-    $sesname = (preg_replace('/\s+/', '-', $_POST['sessname']));
-    $slivereport = ($_POST['livereport']);
-
-    $search = array('1' => "$session!$iphost", "$session@|@$userhost", "$session#|#$passwdhost", "$session%$hotspotname", "$session^$dnsname", "$session&$currency", "$session*$areload", "$session($iface", "$session)$infolp", "$session=$idleto", "'$session'", "$session@!@$livereport");
-
-    $replace = array('1' => "$sesname!$siphost", "$sesname@|@$suserhost", "$sesname#|#$spasswdhost", "$sesname%$shotspotname", "$sesname^$sdnsname", "$sesname&$scurrency", "$sesname*$sreload", "$sesname($siface", "$sesname)$sinfolp", "$sesname=$sidleto", "'$sesname'", "$sesname@!@$slivereport");
-
-    for ($i = 1; $i < 15; $i++) {
-      $file = file("./include/config.php");
-      $content = file_get_contents("./include/config.php");
-      $newcontent = str_replace((string)$search[$i], (string)$replace[$i], "$content");
-      file_put_contents("./include/config.php", "$newcontent");
-    }
     $_SESSION["connect"] = "";
-    echo "<script>window.location='./admin.php?id=settings&session=" . $sesname . "'</script>";
+    $cfgredirect = true;
+    if ($written) {
+      echo "<script>window.location='./admin.php?id=settings&session=" . $sesname . "'</script>";
+    } else {
+      echo "<script>window.location='./admin.php?id=sessions'</script>";
+    }
+
   }
-  if ($currency == "") {
-    echo "<script>window.location='./admin.php?id=settings&session=" . $session . "'</script>";
+
+  // A session name that is neither new nor present in config.php cannot be
+  // edited. Sending the browser back to the same URL used to loop forever, so
+  // fall back to the router list instead.
+  if (!$cfgredirect && $session !== "" && !$cfgIsNew && !$cfgExists) {
+    echo "<script>window.location='./admin.php?id=sessions'</script>";
   }
 }
 ?>

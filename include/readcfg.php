@@ -43,3 +43,64 @@ $cekindo['indo'] = array(
 );
 
 
+
+// -------------------------------------------------------------------------
+// Helpers shared by the two pages that write include/config.php
+// (settings/settings.php and settings/sessions.php).
+//
+// Every value is stored inside a single-quoted PHP string, one line per router
+// session, and readcfg() reads it back by splitting on the delimiters above.
+// A quote (or a backslash, or a newline) used to close that string early and
+// leave config.php with a parse error - and a config.php that will not parse
+// blanks the whole UI. Non-scalar input (a form field posted as an array) is
+// rejected too, otherwise it would be stored as the literal "Array".
+//
+// Guarded with function_exists because readcfg.php is include()d from many
+// pages and can therefore run more than once in a single request.
+// -------------------------------------------------------------------------
+if (!function_exists('mikhmon_cfg_clean')) {
+    function mikhmon_cfg_clean($value)
+    {
+        if (!is_scalar($value)) {
+            return '';
+        }
+        $value = (string) $value;
+        $value = str_replace(array("'", '"', '<', '>', "\\", "\r", "\n", "\0"), '', $value);
+        return trim($value);
+    }
+}
+
+// Session names are used three ways: as the key in config.php, inside the
+// delimited values on that line, and inside an inline <script> redirect. Keep
+// them identifier-like so none of those can be broken from a pasted value.
+if (!function_exists('mikhmon_cfg_name')) {
+    function mikhmon_cfg_name($value)
+    {
+        $value = preg_replace('/\s+/', '-', mikhmon_cfg_clean($value));
+        $value = preg_replace('/[^A-Za-z0-9._-]/', '', $value);
+        return trim($value, '-');
+    }
+}
+
+// Write a config file through a unique temporary file, then rename over the
+// target. A reader (or a request that includes the file) either sees the old
+// content or the new one, never a truncated file, and two concurrent saves
+// cannot publish each other's half written output.
+if (!function_exists('mikhmon_cfg_write')) {
+    function mikhmon_cfg_write($file, $content)
+    {
+        $tmp = $file . '.' . getmypid() . '.' . mt_rand(100000, 999999) . '.tmp';
+
+        if (@file_put_contents($tmp, $content) !== false) {
+            if (@rename($tmp, $file)) {
+                return true;
+            }
+            // Some layouts refuse to rename over the target - a config file
+            // that is itself a bind mount, for instance - so fall back to
+            // writing in place rather than losing the save.
+            @unlink($tmp);
+        }
+
+        return @file_put_contents($file, $content) !== false;
+    }
+}
