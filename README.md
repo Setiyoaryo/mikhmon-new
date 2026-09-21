@@ -5,15 +5,34 @@
 
 ### Changelog
 
-#### High-Performance Go Engine & Traefik Reverse Proxy
-1. **High-Performance Voucher Generator (Golang)**:
-   - Core voucher generation engine rewritten in Go (`cmd/voucher-generator`, `bin/voucher-generator`).
-   - High concurrency worker pool supporting up to 5,000 vouchers in milliseconds.
-   - Buffered I/O communication with RouterOS API and CSPRNG random generation.
-   - Batch user removal optimization for high volume voucher operations.
-2. **Traefik Reverse Proxy Integration**:
-   - Updated `docker-compose.yml` with Traefik v2 reverse proxy edge routing.
-   - Accessible via `http://localhost` (port 80) and Traefik dashboard on `http://localhost:8088`.
+#### Go Backend, Unchanged PHP UI
+
+The user interface is still the original Mikhmon v3 PHP application — same HTML,
+same CSS themes, same JavaScript, same URLs. What changed is where the RouterOS
+traffic happens.
+
+1. **`mikhmon-api`, a Go backend service** (`cmd/mikhmon-api`):
+   - Owns a pool of authenticated RouterOS API connections and reuses them
+     across requests. The PHP version dialled and logged in once per request.
+   - Creates hotspot users with a bounded worker pool, so a whole voucher batch
+     is pushed in parallel instead of one sequential round-trip per user.
+   - Speaks the RouterOS wire protocol directly (post-6.43 and pre-6.43 login),
+     so no PHP extension or external client is involved.
+2. **`lib/routeros_api.class.php` is now a bridge**: it keeps the exact public
+   surface of the original `RouterosAPI` class (`connect`, `comm`, `write`,
+   `read`, `parseResponse`, `debug`, plus the `encrypt`/`decrypt`/`rand*`
+   helpers) and forwards every call to the Go service over HTTP. The service
+   returns the same raw sentences a socket read would have produced, so
+   `parseResponse()` and every caller behave exactly as before. No other PHP
+   file had to be touched to make the switch.
+3. **`hotspot/generateuser.php`** — only the two `for` loops that added users one
+   at a time were replaced with one call to `mikhmon_bulk_add_hotspot_users()`.
+   The credential generation, the form, and the printed output are untouched.
+4. **Docker / Traefik**: `docker-compose.vps.yml` runs the PHP frontend
+   (nginx + php-fpm in one container) and the Go service (internal network
+   only, no published port) behind an existing Traefik instance.
+5. **`cmd/mockrouteros`** — a fake RouterOS API endpoint for testing without a
+   real MikroTik device. See `docker/README.md`.
 
 #### Update 06-30 2021 V3.20
 1. Perbaikan typo script profile ```on-login```.

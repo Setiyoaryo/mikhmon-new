@@ -1,0 +1,61 @@
+# Production stack for the VPS, behind the EXISTING external Traefik network.
+#   docker compose -f docker-compose.vps.yml up -d --build
+#
+# mikhmon-php : nginx + php-fpm (original PHP UI) — public via Traefik.
+# mikhmon-api : Go microservice on the internal network only — NOT public.
+
+services:
+  mikhmon-php:
+    build:
+      context: .
+      dockerfile: Dockerfile.php
+    container_name: mikhmon-php
+    restart: unless-stopped
+    volumes:
+      # Bind mount: the host repo is the source of truth and include/config.php,
+      # generated vouchers, themes/lang and uploaded logos persist on the host.
+      - ./:/var/www
+    environment:
+      MIKHMON_API_URL: "http://mikhmon-api:8088"
+    depends_on:
+      - mikhmon-api
+    networks:
+      - proxy
+      - mikhmon-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # HTTPS router
+      - "traefik.http.routers.mikhmon.rule=Host(`taufiq.nocify.id`)"
+      - "traefik.http.routers.mikhmon.entrypoints=websecure"
+      - "traefik.http.routers.mikhmon.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mikhmon.service=mikhmon"
+      - "traefik.http.services.mikhmon.loadbalancer.server.port=80"
+      # HTTP -> HTTPS redirect router
+      - "traefik.http.routers.mikhmon-web.rule=Host(`taufiq.nocify.id`)"
+      - "traefik.http.routers.mikhmon-web.entrypoints=web"
+      - "traefik.http.routers.mikhmon-web.middlewares=mikhmon-redirect"
+      - "traefik.http.middlewares.mikhmon-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.mikhmon-redirect.redirectscheme.permanent=true"
+
+  mikhmon-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mikhmon-api
+    restart: unless-stopped
+    environment:
+      MIKHMON_API_ADDR: ":8088"
+      MIKHMON_API_MAX_CONN_PER_ROUTER: "32"
+      MIKHMON_API_IDLE_TIMEOUT: "60s"
+    # Internal-only: no "ports:" mapping, reachable only from php-fpm.
+    expose:
+      - "8088"
+    networks:
+      - mikhmon-internal
+
+networks:
+  proxy:
+    external: true
+  mikhmon-internal:
+    driver: bridge

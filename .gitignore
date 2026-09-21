@@ -6,7 +6,12 @@ Thumbs.db
 *~
 .env
 
-# Go build artifacts (exclude root binary bin/voucher-generator so it can be deployed directly)
-cmd/voucher-generator/voucher-generator
+# Go build artifacts
+/mikhmon-api
+/mockrouteros
 *.test
 *.out
+*.log
+
+# Docker
+docker-compose.override.yml

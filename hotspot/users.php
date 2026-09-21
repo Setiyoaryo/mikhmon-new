@@ -18,8 +18,7 @@
 
 // hide all error
 error_reporting(0);
-ini_set('max_execution_time', 600);
-ini_set('memory_limit', '512M');
+ini_set('max_execution_time', 300);
 
 if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");

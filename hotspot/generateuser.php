@@ -19,8 +19,7 @@ session_start();
 // hide all error
 error_reporting(0);
 
-ini_set('max_execution_time', 600);
-ini_set('memory_limit', '512M');
+ini_set('max_execution_time', 300);
 
 if (!isset($_SESSION["mikhmon"])) {
 	header("Location:../admin.php?id=login");
@@ -63,12 +62,7 @@ date_default_timezone_set($_SESSION['timezone']);
 
 	if (isset($_POST['qty'])) {
 		
-		$qty = intval($_POST['qty']);
-		if ($qty < 1) {
-			$qty = 1;
-		} elseif ($qty > 5000) {
-			$qty = 5000;
-		}
+		$qty = ($_POST['qty']);
 		$server = ($_POST['server']);
 		$user = ($_POST['user']);
 		$userl = ($_POST['userl']);
@@ -109,79 +103,78 @@ date_default_timezone_set($_SESSION['timezone']);
 		$data = $gen;
 		fwrite($handle, $data);
 
-		$go_bin = dirname(__DIR__) . '/bin/voucher-generator';
-		$go_success = false;
+		$a = array("1" => "", "", 1, 2, 2, 3, 3, 4);
 
-		if (file_exists($go_bin) && is_executable($go_bin) && function_exists('proc_open')) {
-			$go_host = $iphost;
-			$go_port = 8728;
-			if (strpos($iphost, ':') !== false) {
-				$parts = explode(':', $iphost);
-				$go_host = $parts[0];
-				$go_port = intval($parts[1]);
-			}
-
-			$payload = json_encode(array(
-				"host" => $go_host,
-				"port" => $go_port,
-				"user" => $userhost,
-				"pass" => decrypt($passwdhost),
-				"ssl" => false,
-				"qty" => $qty,
-				"server" => (string)$server,
-				"mode" => (string)$user,
-				"userl" => intval($userl),
-				"prefix" => (string)$prefix,
-				"char" => (string)$char,
-				"profile" => (string)$profile,
-				"timelimit" => (string)$timelimit,
-				"datalimit" => intval($datalimit),
-				"comment" => (string)$commt,
-				"concurrency" => ($qty >= 1000 ? 32 : 16),
-				"timeout" => 30
-			));
-
-			$descriptorspec = array(
-				0 => array("pipe", "r"),
-				1 => array("pipe", "w"),
-				2 => array("pipe", "w")
-			);
-			$process = @proc_open($go_bin . " -stdin", $descriptorspec, $pipes);
-			if (is_resource($process)) {
-				fwrite($pipes[0], $payload);
-				fclose($pipes[0]);
-				$stdout = stream_get_contents($pipes[1]);
-				fclose($pipes[1]);
-				$stderr = stream_get_contents($pipes[2]);
-				fclose($pipes[2]);
-				$return_value = proc_close($process);
-
-				$res = json_decode($stdout, true);
-				if ($res && isset($res['success']) && $res['success'] === true && $res['count'] > 0) {
-					$go_success = true;
-					$u[1] = $res['first_user'];
+		if ($user == "up") {
+			for ($i = 1; $i <= $qty; $i++) {
+				if ($char == "lower") {
+					$u[$i] = randLC($userl);
+				} elseif ($char == "upper") {
+					$u[$i] = randUC($userl);
+				} elseif ($char == "upplow") {
+					$u[$i] = randULC($userl);
+				} elseif ($char == "mix") {
+					$u[$i] = randNLC($userl);
+				} elseif ($char == "mix1") {
+					$u[$i] = randNUC($userl);
+				} elseif ($char == "mix2") {
+					$u[$i] = randNULC($userl);
 				}
+				if ($userl == 3) {
+					$p[$i] = randN(3);
+				} elseif ($userl == 4) {
+					$p[$i] = randN(4);
+				} elseif ($userl == 5) {
+					$p[$i] = randN(5);
+				} elseif ($userl == 6) {
+					$p[$i] = randN(6);
+				} elseif ($userl == 7) {
+					$p[$i] = randN(7);
+				} elseif ($userl == 8) {
+					$p[$i] = randN(8);
+				}
+
+				$u[$i] = "$prefix$u[$i]";
 			}
+
+			$bulkusers = array();
+			for ($i = 1; $i <= $qty; $i++) {
+				$bulkusers[] = array(
+					"server" => "$server",
+					"name" => "$u[$i]",
+					"password" => "$p[$i]",
+					"profile" => "$profile",
+					"limit-uptime" => "$timelimit",
+					"limit-bytes-total" => "$datalimit",
+					"comment" => "$commt",
+				);
+			}
+			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
 		}
 
-		if (!$go_success) {
-			$a = array("1" => "", "", 1, 2, 2, 3, 3, 4);
+		if ($user == "vc") {
+			$shuf = ($userl - $a[$userl]);
+			for ($i = 1; $i <= $qty; $i++) {
+				if ($char == "lower") {
+					$u[$i] = randLC($shuf);
+				} elseif ($char == "upper") {
+					$u[$i] = randUC($shuf);
+				} elseif ($char == "upplow") {
+					$u[$i] = randULC($shuf);
+				}
+				if ($userl == 3) {
+					$p[$i] = randN(1);
+				} elseif ($userl == 4 || $userl == 5) {
+					$p[$i] = randN(2);
+				} elseif ($userl == 6 || $userl == 7) {
+					$p[$i] = randN(3);
+				} elseif ($userl == 8) {
+					$p[$i] = randN(4);
+				}
 
-			if ($user == "up") {
-				for ($i = 1; $i <= $qty; $i++) {
-					if ($char == "lower") {
-						$u[$i] = randLC($userl);
-					} elseif ($char == "upper") {
-						$u[$i] = randUC($userl);
-					} elseif ($char == "upplow") {
-						$u[$i] = randULC($userl);
-					} elseif ($char == "mix") {
-						$u[$i] = randNLC($userl);
-					} elseif ($char == "mix1") {
-						$u[$i] = randNUC($userl);
-					} elseif ($char == "mix2") {
-						$u[$i] = randNULC($userl);
-					}
+				$u[$i] = "$prefix$u[$i]$p[$i]";
+
+				if ($char == "num") {
 					if ($userl == 3) {
 						$p[$i] = randN(3);
 					} elseif ($userl == 4) {
@@ -196,93 +189,41 @@ date_default_timezone_set($_SESSION['timezone']);
 						$p[$i] = randN(8);
 					}
 
-					$u[$i] = "$prefix$u[$i]";
+					$u[$i] = "$prefix$p[$i]";
+				}
+				if ($char == "mix") {
+					$p[$i] = randNLC($userl);
+
+
+					$u[$i] = "$prefix$p[$i]";
+				}
+				if ($char == "mix1") {
+					$p[$i] = randNUC($userl);
+
+
+					$u[$i] = "$prefix$p[$i]";
+				}
+				if ($char == "mix2") {
+					$p[$i] = randNULC($userl);
+
+
+					$u[$i] = "$prefix$p[$i]";
 				}
 
-				for ($i = 1; $i <= $qty; $i++) {
-					$API->comm("/ip/hotspot/user/add", array(
-						"server" => "$server",
-						"name" => "$u[$i]",
-						"password" => "$p[$i]",
-						"profile" => "$profile",
-						"limit-uptime" => "$timelimit",
-						"limit-bytes-total" => "$datalimit",
-						"comment" => "$commt",
-					));
-				}
 			}
-
-			if ($user == "vc") {
-				$shuf = ($userl - $a[$userl]);
-				for ($i = 1; $i <= $qty; $i++) {
-					if ($char == "lower") {
-						$u[$i] = randLC($shuf);
-					} elseif ($char == "upper") {
-						$u[$i] = randUC($shuf);
-					} elseif ($char == "upplow") {
-						$u[$i] = randULC($shuf);
-					}
-					if ($userl == 3) {
-						$p[$i] = randN(1);
-					} elseif ($userl == 4 || $userl == 5) {
-						$p[$i] = randN(2);
-					} elseif ($userl == 6 || $userl == 7) {
-						$p[$i] = randN(3);
-					} elseif ($userl == 8) {
-						$p[$i] = randN(4);
-					}
-
-					$u[$i] = "$prefix$u[$i]$p[$i]";
-
-					if ($char == "num") {
-						if ($userl == 3) {
-							$p[$i] = randN(3);
-						} elseif ($userl == 4) {
-							$p[$i] = randN(4);
-						} elseif ($userl == 5) {
-							$p[$i] = randN(5);
-						} elseif ($userl == 6) {
-							$p[$i] = randN(6);
-						} elseif ($userl == 7) {
-							$p[$i] = randN(7);
-						} elseif ($userl == 8) {
-							$p[$i] = randN(8);
-						}
-
-						$u[$i] = "$prefix$p[$i]";
-					}
-					if ($char == "mix") {
-						$p[$i] = randNLC($userl);
-
-
-						$u[$i] = "$prefix$p[$i]";
-					}
-					if ($char == "mix1") {
-						$p[$i] = randNUC($userl);
-
-
-						$u[$i] = "$prefix$p[$i]";
-					}
-					if ($char == "mix2") {
-						$p[$i] = randNULC($userl);
-
-
-						$u[$i] = "$prefix$p[$i]";
-					}
-
-				}
-				for ($i = 1; $i <= $qty; $i++) {
-					$API->comm("/ip/hotspot/user/add", array(
-						"server" => "$server",
-						"name" => "$u[$i]",
-						"password" => "$u[$i]",
-						"profile" => "$profile",
-						"limit-uptime" => "$timelimit",
-						"limit-bytes-total" => "$datalimit",
-						"comment" => "$commt",
-					));
-				}
+			$bulkusers = array();
+			for ($i = 1; $i <= $qty; $i++) {
+				$bulkusers[] = array(
+					"server" => "$server",
+					"name" => "$u[$i]",
+					"password" => "$u[$i]",
+					"profile" => "$profile",
+					"limit-uptime" => "$timelimit",
+					"limit-bytes-total" => "$datalimit",
+					"comment" => "$commt",
+				);
 			}
+			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
 		}
 
 
@@ -383,7 +324,7 @@ date_default_timezone_set($_SESSION['timezone']);
 </div>
 <table class="table">
   <tr>
-    <td class="align-middle"><?= $_qty ?></td><td><div><input class="form-control " type="number" name="qty" min="1" max="5000" value="1" required="1"></div></td>
+    <td class="align-middle"><?= $_qty ?></td><td><div><input class="form-control " type="number" name="qty" min="1" max="500" value="1" required="1"></div></td>
   </tr>
   <tr>
     <td class="align-middle">Server</td>

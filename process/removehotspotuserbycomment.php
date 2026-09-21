@@ -27,17 +27,13 @@ $TotalReg = count($getuser);
 $_SESSION['ubp'] = $getuser[0]['profile'];
 $_SESSION['ubc'] = "";
 
-if ($TotalReg > 0) {
-  $uids = array();
-  for ($i = 0; $i < $TotalReg; $i++) {
-    $uids[] = $getuser[$i]['.id'];
-  }
-  $chunks = array_chunk($uids, 100);
-  foreach ($chunks as $chunk) {
-    $API->comm("/ip/hotspot/user/remove", array(
-      ".id" => implode(',', $chunk),
-    ));
-  }
+for ($i = 0; $i < $TotalReg; $i++) {
+  $userdetails = $getuser[$i];
+  $uid = $userdetails['.id'];
+
+  $API->comm("/ip/hotspot/user/remove", array(
+    ".id" => "$uid",
+  ));
 }
 if ($_SESSION['ubp'] != "") {
   echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
