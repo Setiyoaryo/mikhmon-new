@@ -38,7 +38,7 @@ error_reporting(0);
 // rewrites their limit-uptime to 1s, and "Expired Users" removes them.
 
 if (isset($_SESSION['timezone']) && $_SESSION['timezone'] != "") {
-  // The date in the comment was written with this timezone, so compare in it.
+  // The date in the comment was written with this timezone.
   date_default_timezone_set($_SESSION['timezone']);
 }
 
@@ -47,38 +47,16 @@ if ($retention < 1) {
   $retention = 30;
 }
 
-$cutoff = time() - ($retention * 86400);
-
-$getuser = $API->comm("/ip/hotspot/user/print", array(
-  "?uptime" => "00:00:00",
+// The backend does the age comparison while it walks the rows, so nothing has
+// to travel back and forth for it.
+$result = mikhmon_bulk_remove_by_query($API, array(
+  "uptime" => "00:00:00",
+), array(
+  "days" => $retention,
 ));
-
-$uids = array();
-$TotalReg = is_array($getuser) ? count($getuser) : 0;
-
-for ($i = 0; $i < $TotalReg; $i++) {
-  $comment = isset($getuser[$i]['comment']) ? $getuser[$i]['comment'] : "";
-
-  // The date is the third dash separated field of the comment.
-  $parts = explode("-", $comment);
-  if (!isset($parts[2]) || !preg_match('/^([0-9]{2})\.([0-9]{2})\.([0-9]{2})$/', $parts[2], $m)) {
-    continue;
-  }
-
-  $stamp = mktime(0, 0, 0, (int) $m[1], (int) $m[2], 2000 + (int) $m[3]);
-  if ($stamp === false || $stamp > $cutoff) {
-    continue;
-  }
-
-  if (isset($getuser[$i]['.id']) && $getuser[$i]['.id'] !== "") {
-    $uids[] = $getuser[$i]['.id'];
-  }
-}
 
 $_SESSION['ubp'] = "";
 $_SESSION['ubc'] = "";
-
-mikhmon_bulk_remove_hotspot_users($API, $uids);
 
 echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "'</script>";
 

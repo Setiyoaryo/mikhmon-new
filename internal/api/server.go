@@ -72,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/generate", s.handleGenerate)
 	mux.HandleFunc("/v1/bulk/user-add", s.handleBulkUserAdd)
 	mux.HandleFunc("/v1/bulk/remove", s.handleBulkRemove)
+	mux.HandleFunc("/v1/bulk/remove-by-query", s.handleBulkRemoveByQuery)
 	return s.withRecovery(s.withAuth(mux))
 }
 
@@ -617,4 +618,164 @@ func (s *Server) handleBulkRemove(w http.ResponseWriter, r *http.Request) {
 		"duration_ms": time.Since(start).Milliseconds(),
 		"errors":      issues,
 	})
+}
+
+// ------------------------------------------------------- bulk remove by query
+
+type bulkRemoveQueryRequest struct {
+	Session string            `json:"session"`
+	Print   string            `json:"print"`   // defaults to /ip/hotspot/user/print
+	Command string            `json:"command"` // defaults to /ip/hotspot/user/remove
+	Query   map[string]string `json:"query"`   // e.g. {"comment":"x","uptime":"00:00:00"}
+	// Days, when set, keeps only rows whose Mikhmon batch comment carries a
+	// generation date older than that many days.
+	Days        int   `json:"days"`
+	Concurrency int   `json:"concurrency"`
+	TimeoutMS   int64 `json:"timeout_ms"`
+}
+
+// handleBulkRemoveByQuery finds the matching rows and removes them, all inside
+// this process.
+//
+// The PHP side used to print every hotspot user, ship all of them over HTTP,
+// build the id list and post it straight back. On a 5500 user table that round
+// trip dwarfed the actual removal, so the lookup happens here instead: one
+// print to the router, then the removals in parallel.
+func (s *Server) handleBulkRemoveByQuery(w http.ResponseWriter, r *http.Request) {
+	var req bulkRemoveQueryRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+
+	printCmd := req.Print
+	if printCmd == "" {
+		printCmd = "/ip/hotspot/user/print"
+	}
+	removeCmd := req.Command
+	if removeCmd == "" {
+		removeCmd = "/ip/hotspot/user/remove"
+	}
+	for _, cmd := range []string{printCmd, removeCmd} {
+		if !strings.HasPrefix(cmd, "/") || strings.ContainsAny(cmd, " \t\r\n=") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid command"})
+			return
+		}
+	}
+
+	if _, err := s.requireSession(req.Session); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	start := time.Now()
+	timeout := s.execTimeout(req.TimeoutMS)
+
+	// Ask only for the two fields this needs: on a large table the default
+	// reply carries every property of every user.
+	words := []string{printCmd, "=.proplist=.id,comment,profile"}
+	for k, v := range req.Query {
+		words = append(words, "?"+k+"="+v)
+	}
+
+	replies, err := s.mgr.Exec(req.Session, timeout, words)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "error": "print failed: " + err.Error(),
+		})
+		return
+	}
+
+	now := time.Now()
+	var ids []string
+	firstProfile := ""
+	for _, sent := range replies {
+		if sent.Type() != "!re" {
+			continue
+		}
+		id := sent.Get(".id")
+		if id == "" {
+			continue
+		}
+		if req.Days > 0 && !commentOlderThan(sent.Get("comment"), req.Days, now) {
+			continue
+		}
+		if firstProfile == "" {
+			// Callers redirect back to this profile's user list, the way the
+			// old PHP side did after reading the first matching row.
+			firstProfile = sent.Get("profile")
+		}
+		ids = append(ids, id)
+	}
+
+	if len(ids) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "matched": 0, "total": 0, "removed": 0, "failed": 0,
+			"profile": "", "duration_ms": time.Since(start).Milliseconds(),
+		})
+		return
+	}
+
+	concurrency := req.Concurrency
+	if concurrency < 1 {
+		concurrency = 16
+	}
+	if concurrency > 64 {
+		concurrency = 64
+	}
+
+	cmds := make([][]string, len(ids))
+	for i, id := range ids {
+		cmds[i] = []string{removeCmd, "=.id=" + id}
+	}
+
+	errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, timeout, cmds)
+	if fatal != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": false, "error": fatal.Error(), "matched": len(ids), "removed": 0, "failed": len(ids),
+		})
+		return
+	}
+
+	removed := 0
+	var issues []string
+	for i, err := range errs {
+		if err == nil {
+			removed++
+			continue
+		}
+		if len(issues) < 25 {
+			issues = append(issues, ids[i]+": "+err.Error())
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"matched":     len(ids),
+		"total":       len(ids),
+		"removed":     removed,
+		"failed":      len(ids) - removed,
+		"profile":     firstProfile,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"errors":      issues,
+	})
+}
+
+// commentOlderThan reports whether a Mikhmon batch comment carries a generation
+// date older than days. Mikhmon writes the date as the third dash separated
+// field, e.g. "vc-735-09.22.26-warung-oktober" is 09.22.26 -> 2026-09-22.
+// A comment without that shape never matches, so a user added by hand is never
+// swept up by the retention cleanup.
+func commentOlderThan(comment string, days int, now time.Time) bool {
+	if days <= 0 {
+		return true
+	}
+	parts := strings.Split(comment, "-")
+	if len(parts) < 3 {
+		return false
+	}
+	stamp, err := time.ParseInLocation("01.02.06", parts[2], now.Location())
+	if err != nil {
+		return false
+	}
+	return stamp.AddDate(0, 0, days).Before(now)
 }

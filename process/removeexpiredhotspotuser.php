@@ -18,22 +18,14 @@
 session_start();
 // hide all error
 error_reporting(0);
-$getuser = $API->comm("/ip/hotspot/user/print", array(
-  "?limit-uptime" => "1s",
+// Expired vouchers are the ones the user profile's scheduler rewrote to
+// limit-uptime 1s. One call finds and deletes them.
+$result = mikhmon_bulk_remove_by_query($API, array(
+  "limit-uptime" => "1s",
 ));
-$TotalReg = count($getuser);
 
-$_SESSION['ubp'] = isset($getuser[0]['profile']) ? $getuser[0]['profile'] : "";
+$_SESSION['ubp'] = isset($result['profile']) && $result['profile'] != "" ? $result['profile'] : "";
 $_SESSION['ubc'] = "";
-
-// Parallel delete, same as the by-comment flow.
-$uids = array();
-for ($i = 0; $i < $TotalReg; $i++) {
-  if (isset($getuser[$i]['.id']) && $getuser[$i]['.id'] !== "") {
-    $uids[] = $getuser[$i]['.id'];
-  }
-}
-mikhmon_bulk_remove_hotspot_users($API, $uids);
 if ($_SESSION['ubp'] != "") {
   echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
 } else {

@@ -789,6 +789,60 @@ function mikhmon_bulk_remove_hotspot_users($API, $ids, $concurrency = 0)
 {
     return mikhmon_bulk_remove_ids($API, '/ip/hotspot/user/remove', $ids, $concurrency);
 }
+
+
+/**
+ * Find matching RouterOS rows and delete them, without shipping them here.
+ *
+ * This is the fast path for the bulk deletes. Doing it from PHP means printing
+ * every matching user, sending all of them over HTTP, building the id list and
+ * posting it back; on a 5500 user table that round trip costs far more than the
+ * removal itself. Here the service does the print and the removes back to back.
+ *
+ * @param RouterosAPI $API          A connected API instance
+ * @param array       $query        RouterOS query words, e.g. array('comment' => 'x', 'uptime' => '00:00:00')
+ * @param array       $options      print / command / days / concurrency
+ *
+ * @return array  matched / total / removed / failed / duration_ms / errors
+ */
+function mikhmon_bulk_remove_by_query($API, $query = array(), $options = array())
+{
+    if (!is_object($API) || empty($API->session)) {
+        return array('matched' => 0, 'total' => 0, 'removed' => 0, 'failed' => 0, 'errors' => array('not connected'));
+    }
+
+    $payload = array(
+        'session' => $API->session,
+        'query'   => $query,
+    );
+
+    foreach (array('print', 'command', 'days', 'concurrency') as $key) {
+        if (isset($options[$key])) {
+            $payload[$key] = $options[$key];
+        }
+    }
+
+    if (empty($payload['concurrency'])) {
+        $payload['concurrency'] = (int) mikhmon_api_env('MIKHMON_API_CONCURRENCY', 16);
+    }
+    if (empty($payload['timeout_ms'])) {
+        $payload['timeout_ms'] = max(1000, ((int) $API->timeout) * 1000);
+    }
+
+    $response = mikhmon_api_post('/v1/bulk/remove-by-query', $payload, mikhmon_api_bulk_timeout());
+
+    if (!is_array($response) || empty($response['ok'])) {
+        return array(
+            'matched' => 0,
+            'total'   => 0,
+            'removed' => 0,
+            'failed'  => 0,
+            'errors'  => array(mikhmon_api_error($response)),
+        );
+    }
+
+    return $response;
+}
 // encrypt decript
 
 if (!function_exists('encrypt')) {

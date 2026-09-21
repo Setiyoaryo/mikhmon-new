@@ -18,24 +18,20 @@
 session_start();
 // hide all error
 error_reporting(0);
-$getuser = $API->comm("/ip/hotspot/user/print", array(
-  "?comment" => "$removehotspotuserbycomment",
-  "?uptime" => "00:00:00"
+// One call finds the batch and deletes it. Doing it here would mean printing
+// every matching user, shipping the whole list over HTTP and posting the ids
+// straight back, which on a large table costs more than the removal itself.
+//
+// The query keeps the "never used" guard: a voucher that has been logged in
+// with has a non zero uptime and is never selected.
+$result = mikhmon_bulk_remove_by_query($API, array(
+  "comment" => $removehotspotuserbycomment,
+  "uptime"  => "00:00:00",
 ));
-$TotalReg = count($getuser);
 
-$_SESSION['ubp'] = isset($getuser[0]['profile']) ? $getuser[0]['profile'] : "";
+// Land back on the batch's own profile list, as before.
+$_SESSION['ubp'] = isset($result['profile']) && $result['profile'] != "" ? $result['profile'] : "";
 $_SESSION['ubc'] = "";
-
-// Collect the ids, then let the backend delete them in parallel. Removing one
-// user per round trip is what made clearing a large batch take minutes.
-$uids = array();
-for ($i = 0; $i < $TotalReg; $i++) {
-  if (isset($getuser[$i]['.id']) && $getuser[$i]['.id'] !== "") {
-    $uids[] = $getuser[$i]['.id'];
-  }
-}
-mikhmon_bulk_remove_hotspot_users($API, $uids);
 if ($_SESSION['ubp'] != "") {
   echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
 } else {
