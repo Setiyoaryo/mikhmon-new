@@ -23,17 +23,17 @@ $getuser = $API->comm("/ip/hotspot/user/print", array(
 ));
 $TotalReg = count($getuser);
 
-$_SESSION['ubp'] = $getuser[0]['profile'];
+$_SESSION['ubp'] = isset($getuser[0]['profile']) ? $getuser[0]['profile'] : "";
 $_SESSION['ubc'] = "";
 
+// Parallel delete, same as the by-comment flow.
+$uids = array();
 for ($i = 0; $i < $TotalReg; $i++) {
-  $userdetails = $getuser[$i];
-  $uid = $userdetails['.id'];
-
-  $API->comm("/ip/hotspot/user/remove", array(
-    ".id" => "$uid",
-  ));
+  if (isset($getuser[$i]['.id']) && $getuser[$i]['.id'] !== "") {
+    $uids[] = $getuser[$i]['.id'];
+  }
 }
+mikhmon_bulk_remove_hotspot_users($API, $uids);
 if ($_SESSION['ubp'] != "") {
   echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
 } else {

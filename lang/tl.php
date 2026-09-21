@@ -206,3 +206,6 @@ $_delete_report = '
 		        <li>Inirerekomenda rin na i download muna ang '.$_user_log.' . </li>
 		      </ul>
 ';
+
+//Remove unused vouchers older than N days
+$_unused_older = "Hindi pa nagamit > 30d";

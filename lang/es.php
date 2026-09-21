@@ -206,3 +206,6 @@ $_delete_report = '
 		        <li>Se recomienda descargar.'.$_user_log.' Primero. </li>
 		      </ul>
 ';
+
+//Eliminar vales no utilizados con mas de N dias
+$_unused_older = "Sin usar > 30d";

@@ -149,6 +149,10 @@ if (!isset($_SESSION["mikhmon"])) {
     <?php ; }else if ($exp == "1"){ ?>
   <button class="btn bg-red" onclick="if(confirm('Are you sure to delete users?')){loadpage('./?remove-hotspot-user-expired=1&session=<?= $session; ?>');loader();}else{}" title="Remove user expired">  <i class="fa fa-trash"></i> Expired Users</button>
       <?php } ?>
+  <?php // Retention cleanup: deletes vouchers that were never used and whose
+        // batch comment is older than 30 days. Shown always, because it is not
+        // tied to the current filter the way the two buttons above are. ?>
+  <button class="btn bg-red" onclick="if(confirm('Remove UNUSED vouchers older than 30 days?\n\nOnly vouchers that have never been logged in with (uptime 0s) and whose comment date is older than 30 days are removed. Vouchers that were used are not touched.')){loadpage('./?remove-unused-hotspot-user=1&days=30&session=<?= $session; ?>');loader();}else{}" title="Remove unused vouchers older than 30 days">  <i class="fa fa-trash"></i> <?= $_unused_older ?></button>
   <script>
     function printV(a,b){
     var comm = document.getElementById('comment').value;

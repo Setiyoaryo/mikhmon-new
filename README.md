@@ -5,7 +5,54 @@
 
 ### Changelog
 
-#### Go Backend, Unchanged PHP UI
+#### Voucher batches up to 5000, and what happens to the ones nobody uses
+
+Generating and clearing vouchers is now sized for real batches, measured
+against a live RouterOS 6.49 CHR (single core):
+
+| Action | 1000 vouchers | 5000 vouchers |
+|---|---|---|
+| Generate (form -> nginx -> PHP -> Go -> router) | ~0.45 s | **~2.3 s** |
+| Delete by comment | ~0.5 s | **~9 s** |
+
+Worker connections default to 16. More is not better: on a single core router,
+32 connections measured *slower* than 16 for both add and delete, so the
+default is the fast one.
+
+What changed:
+  - the Generate form accepts up to 5000 (was 500), with the PHP and nginx
+    timeouts raised to match.
+  - deletes go out as one parallel batch instead of one round trip per user.
+    "By Comment" and "Expired Users" used to walk the list one user at a time;
+    deleting a user through the user list used to cost six round trips *per
+    user* because it looked up that user's script and scheduler separately.
+  - attributes are omitted rather than sent empty, because RouterOS rejects an
+    empty limit-uptime outright and that failed the entire batch.
+
+#### Where unused vouchers go
+
+Vouchers are MikroTik hotspot users, so they are inventory: left alone they
+fill the user table, and every lookup gets slower as it grows. There are three
+states and each has its own tool.
+
+1. **Never used** (`uptime` still `0s`). Dead inventory once the selling period
+   is over. Two ways to clear them, both of which only ever touch unused
+   vouchers - a voucher that was logged in with keeps its uptime and is never
+   selected:
+   - *By Comment* (pick a batch in the user list) - clears one batch.
+   - *Unused > 30d* (new button in the user list) - clears every batch whose
+     comment is older than 30 days. Mikhmon already writes the generation date
+     into each batch comment (`vc-735-09.22.26-name`), so age needs no extra
+     bookkeeping. Comments without a date are skipped, and the retention window
+     is a URL parameter (`&days=90`) if 30 is not what you want.
+2. **Used and still valid.** Leave them; the user profile's validity handles it.
+3. **Used and expired.** The profile scheduler rewrites their `limit-uptime` to
+   `1s`, and *Expired Users* clears them.
+
+Suggested routine: keep unused vouchers for your selling window (30 days is the
+default here), then run *Unused > 30d* once a month. Do not delete used-but-
+valid vouchers just to tidy up - that cuts off customers who paid.
+
 
 The user interface is still the original Mikhmon v3 PHP application — same HTML,
 same CSS themes, same JavaScript, same URLs. What changed is where the RouterOS

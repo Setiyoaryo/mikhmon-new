@@ -205,3 +205,6 @@ $_delete_report = '
 		        <li>Disarankan untuk mengunduh '.$_user_log.' terlebih dahulu.</li>
 		      </ul>
 ';
+
+//Hapus voucher belum terpakai yang lebih tua dari N hari
+$_unused_older = "Belum Terpakai > 30h";

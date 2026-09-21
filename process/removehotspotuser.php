@@ -18,92 +18,76 @@
 session_start();
 // hide all error
 error_reporting(0);
+// Both entry points do the same thing: delete the selected hotspot user(s)
+// together with the per-user script and scheduler Mikhmon creates for them.
+// The original code did three prints and three removes PER user, so deleting a
+// few hundred vouchers meant a few hundred round trips. The lookups now happen
+// once and every removal goes out as one parallel batch.
+
 if ($removehotspotusers != "") {
-	$uids = explode("~", $removehotspotusers);
+  $uids = explode("~", $removehotspotusers);
 
-	$nuids = count($uids);
-
-	for ($i = 0; $i < $nuids; $i++) {
-
-		$getuname = $API->comm("/ip/hotspot/user/print", array(
-			"?.id" => "$uids[$i]",
-		));
-
-		$name = $getuname[0]['name'];
-
-		$getscr = $API->comm("/system/script/print", array(
-			"?name" => "$name",
-		));
-
-		$scr = $getscr[0]['.id'];
-
-		$getsch = $API->comm("/system/scheduler/print", array(
-			"?name" => "$name",
-		));
-
-		$sch = $getsch[0]['.id'];
-
-		$API->comm("/system/script/remove", array(
-			".id" => "$scr",
-		));
-
-		$API->comm("/system/scheduler/remove", array(
-			".id" => "$sch",
-		));
-
-		$API->comm("/ip/hotspot/user/remove", array(
-			".id" => "$uids[$i]",
-		));
-
-	}
-
-	if ($_SESSION['ubp'] != "") {
-		echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
-	} elseif ($_SESSION['ubc'] != "") {
-		echo "<script>window.location='./?hotspot=users&comment=" . $_SESSION['ubc'] . "&session=" . $session . "'</script>";
-	} else {
-		echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "'</script>";
-	}
-
-
+  // One print to map .id -> name, instead of one print per selected user.
+  $nameById = array();
+  $allusers = $API->comm("/ip/hotspot/user/print");
+  if (is_array($allusers)) {
+    foreach ($allusers as $u) {
+      if (isset($u['.id'])) {
+        $nameById[$u['.id']] = isset($u['name']) ? $u['name'] : "";
+      }
+    }
+  }
 } else {
-	$getuname = $API->comm("/ip/hotspot/user/print", array(
-		"?.id" => "$removehotspotuser",
-	));
+  $uids = array($removehotspotuser);
 
-	$name = $getuname[0]['name'];
+  $nameById = array();
+  $getuname = $API->comm("/ip/hotspot/user/print", array(
+    "?.id" => "$removehotspotuser",
+  ));
+  if (isset($getuname[0]['.id'])) {
+    $nameById[$getuname[0]['.id']] = isset($getuname[0]['name']) ? $getuname[0]['name'] : "";
+  }
+}
 
-	$getscr = $API->comm("/system/script/print", array(
-		"?name" => "$name",
-	));
+// The script and scheduler Mikhmon creates for a user carry the user's name.
+$names = array();
+foreach ($uids as $uid) {
+  if (isset($nameById[$uid]) && $nameById[$uid] !== "") {
+    $names[$nameById[$uid]] = true;
+  }
+}
 
-	$scr = $getscr[0]['.id'];
+$scrIds = array();
+$schIds = array();
+if (!empty($names)) {
+  $getscr = $API->comm("/system/script/print");
+  if (is_array($getscr)) {
+    foreach ($getscr as $s) {
+      if (isset($s['name'], $s['.id']) && isset($names[$s['name']])) {
+        $scrIds[] = $s['.id'];
+      }
+    }
+  }
 
-	$getsch = $API->comm("/system/scheduler/print", array(
-		"?name" => "$name",
-	));
+  $getsch = $API->comm("/system/scheduler/print");
+  if (is_array($getsch)) {
+    foreach ($getsch as $s) {
+      if (isset($s['name'], $s['.id']) && isset($names[$s['name']])) {
+        $schIds[] = $s['.id'];
+      }
+    }
+  }
+}
 
-	$sch = $getsch[0]['.id'];
+mikhmon_bulk_remove_ids($API, "/system/script/remove", $scrIds);
+mikhmon_bulk_remove_ids($API, "/system/scheduler/remove", $schIds);
+mikhmon_bulk_remove_hotspot_users($API, $uids);
 
-	$API->comm("/system/script/remove", array(
-		".id" => "$scr",
-	));
-
-	$API->comm("/system/scheduler/remove", array(
-		".id" => "$sch",
-	));
-
-	$API->comm("/ip/hotspot/user/remove", array(
-		".id" => "$removehotspotuser",
-	));
-
-
-	if ($_SESSION['ubp'] != "") {
-		echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
-	} elseif ($_SESSION['ubc'] != "") {
-		echo "<script>window.location='./?hotspot=users&comment=" . $_SESSION['ubc'] . "&session=" . $session . "'</script>";
-	} else {
-		echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "'</script>";
-	}
+if ($_SESSION['ubp'] != "") {
+  echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
+} elseif ($_SESSION['ubc'] != "") {
+  echo "<script>window.location='./?hotspot=users&comment=" . $_SESSION['ubc'] . "&session=" . $session . "'</script>";
+} else {
+  echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "'</script>";
 }
 ?>

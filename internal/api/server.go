@@ -71,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/exec", s.handleExec)
 	mux.HandleFunc("/v1/generate", s.handleGenerate)
 	mux.HandleFunc("/v1/bulk/user-add", s.handleBulkUserAdd)
+	mux.HandleFunc("/v1/bulk/remove", s.handleBulkRemove)
 	return s.withRecovery(s.withAuth(mux))
 }
 
@@ -400,16 +401,28 @@ func (s *Server) addVouchers(session string, concurrency int, timeout time.Durat
 
 	cmds := make([][]string, len(vouchers))
 	for i, v := range vouchers {
-		cmds[i] = []string{
-			"/ip/hotspot/user/add",
-			"=server=" + v.Server,
-			"=name=" + v.Name,
-			"=password=" + v.Password,
-			"=profile=" + v.Profile,
-			"=limit-uptime=" + v.TimeLimit,
-			"=limit-bytes-total=" + strconv.FormatInt(v.DataLimit, 10),
-			"=comment=" + v.Comment,
+		// Empty attributes are left out entirely. RouterOS rejects some of them
+		// outright ("invalid time value for argument limit-uptime" for an empty
+		// limit-uptime), which would fail the whole batch; omitting the word
+		// makes the router fall back to its default instead.
+		cmd := []string{"/ip/hotspot/user/add"}
+		for _, attr := range []struct{ key, value string }{
+			{"server", v.Server},
+			{"name", v.Name},
+			{"password", v.Password},
+			{"profile", v.Profile},
+			{"limit-uptime", v.TimeLimit},
+			{"comment", v.Comment},
+		} {
+			if attr.value != "" {
+				cmd = append(cmd, "="+attr.key+"="+attr.value)
+			}
 		}
+		// A zero byte limit means "no limit", so it is only sent when set.
+		if v.DataLimit > 0 {
+			cmd = append(cmd, "=limit-bytes-total="+strconv.FormatInt(v.DataLimit, 10))
+		}
+		cmds[i] = cmd
 	}
 
 	errs, fatal := s.mgr.ExecBatch(session, concurrency, timeout, cmds)
@@ -500,4 +513,108 @@ func (s *Server) requireSession(id string) (*routeros.Session, error) {
 		return nil, errors.New("missing session")
 	}
 	return s.mgr.Session(id)
+}
+
+// --------------------------------------------------------------- bulk remove
+
+type bulkRemoveRequest struct {
+	Session     string   `json:"session"`
+	Command     string   `json:"command"` // defaults to /ip/hotspot/user/remove
+	IDs         []string `json:"ids"`     // .id values ("*1", "*A", ...)
+	Concurrency int      `json:"concurrency"`
+	TimeoutMS   int64    `json:"timeout_ms"`
+}
+
+// handleBulkRemove deletes many menu items in parallel.
+//
+// PHP used to issue one remove per item, each with its own round trip, so
+// clearing a 5000 voucher batch took minutes. This does the same work across
+// the connection pool instead. The command is supplied by the caller because
+// the same helper also clears the per-user scripts and schedulers.
+func (s *Server) handleBulkRemove(w http.ResponseWriter, r *http.Request) {
+	var req bulkRemoveRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+
+	command := req.Command
+	if command == "" {
+		command = "/ip/hotspot/user/remove"
+	}
+	// Only plain menu paths: no attribute words, no whitespace.
+	if !strings.HasPrefix(command, "/") || strings.ContainsAny(command, " \t\r\n=") {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid command"})
+		return
+	}
+
+	if len(req.IDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": 0, "removed": 0, "failed": 0})
+		return
+	}
+	if _, err := s.requireSession(req.Session); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+
+	start := time.Now()
+
+	concurrency := req.Concurrency
+	// 16 measured fastest for removals; the router is usually the bottleneck
+	// (a single core CHR got slower at 32), so more is not better.
+	if concurrency < 1 {
+		concurrency = 16
+	}
+	if concurrency > 64 {
+		concurrency = 64
+	}
+
+	// Drop empty ids up front: an empty one would build an empty command.
+	valid := make([]string, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		if id != "" {
+			valid = append(valid, id)
+		}
+	}
+	if len(valid) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "total": 0, "removed": 0, "failed": 0})
+		return
+	}
+
+	cmds := make([][]string, len(valid))
+	for i, id := range valid {
+		cmds[i] = []string{command, "=.id=" + id}
+	}
+
+	errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, s.execTimeout(req.TimeoutMS), cmds)
+	if fatal != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":      false,
+			"error":   fatal.Error(),
+			"total":   len(valid),
+			"removed": 0,
+			"failed":  len(valid),
+		})
+		return
+	}
+
+	removed := 0
+	var issues []string
+	for i, err := range errs {
+		if err == nil {
+			removed++
+			continue
+		}
+		if len(issues) < 25 {
+			issues = append(issues, valid[i]+": "+err.Error())
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"total":       len(valid),
+		"removed":     removed,
+		"failed":      len(valid) - removed,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"errors":      issues,
+	})
 }

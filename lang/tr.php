@@ -209,3 +209,6 @@ $_delete_report = '
 
 //Translated by: ihsan Keskin
 //For Contact: https://ihsankeskin.org
+
+//Kullanilmayan kuponlari N gunden eskiyse kaldir
+$_unused_older = "Kullanilmadi > 30g";

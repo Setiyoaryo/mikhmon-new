@@ -717,6 +717,78 @@ function mikhmon_bulk_add_hotspot_users($API, $users, $concurrency = 0)
 }
 
 
+/**
+ * Delete many RouterOS menu items in parallel.
+ *
+ * Drop-in replacement for a sequential remove loop, which costs one round trip
+ * per item - clearing a 5000 voucher batch that way took minutes. This hands
+ * the whole id list to the Go service, which works them across its connection
+ * pool instead.
+ *
+ * @param RouterosAPI $API          A connected API instance
+ * @param string      $command      e.g. "/ip/hotspot/user/remove"
+ * @param array       $ids          List of .id values ("*1", "*A", ...)
+ * @param int         $concurrency  Worker connections (0 = MIKHMON_API_CONCURRENCY)
+ *
+ * @return array  total / removed / failed / duration_ms / errors
+ */
+function mikhmon_bulk_remove_ids($API, $command, $ids, $concurrency = 0)
+{
+    $ids = array_values(array_filter((array) $ids, function ($id) {
+        return $id !== "" && $id !== null;
+    }));
+    $total = count($ids);
+
+    if ($total === 0) {
+        return array('total' => 0, 'removed' => 0, 'failed' => 0, 'errors' => array());
+    }
+
+    if (!is_object($API) || empty($API->session)) {
+        return array(
+            'total'   => $total,
+            'removed' => 0,
+            'failed'  => $total,
+            'errors'  => array('not connected'),
+        );
+    }
+
+    if ($concurrency < 1) {
+        $concurrency = (int) mikhmon_api_env('MIKHMON_API_CONCURRENCY', 16);
+    }
+
+    $response = mikhmon_api_post('/v1/bulk/remove', array(
+        'session'     => $API->session,
+        'command'     => $command,
+        'ids'         => $ids,
+        'concurrency' => $concurrency,
+        'timeout_ms'  => max(1000, ((int) $API->timeout) * 1000),
+    ), mikhmon_api_bulk_timeout());
+
+    if (!is_array($response) || empty($response['ok'])) {
+        return array(
+            'total'   => $total,
+            'removed' => 0,
+            'failed'  => $total,
+            'errors'  => array(mikhmon_api_error($response)),
+        );
+    }
+
+    return $response;
+}
+
+/**
+ * Delete many hotspot users in parallel.
+ *
+ * @param RouterosAPI $API          A connected API instance
+ * @param array       $ids          List of hotspot user .id values
+ * @param int         $concurrency  Worker connections (0 = MIKHMON_API_CONCURRENCY)
+ *
+ * @return array  total / removed / failed / duration_ms / errors
+ */
+function mikhmon_bulk_remove_hotspot_users($API, $ids, $concurrency = 0)
+{
+    return mikhmon_bulk_remove_ids($API, '/ip/hotspot/user/remove', $ids, $concurrency);
+}
 // encrypt decript
 
 if (!function_exists('encrypt')) {

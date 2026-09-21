@@ -43,6 +43,27 @@ func newHarness(t *testing.T, opts api.Options) *harness {
 	return &harness{srv: ts, mock: mock}
 }
 
+// rawPost returns the response untouched, for tests that assert on the status.
+func (h *harness) rawPost(t *testing.T, path string, body any) *http.Response {
+	t.Helper()
+
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, h.srv.URL+path, bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	return resp
+}
+
 func (h *harness) post(t *testing.T, path string, body any, headers map[string]string) map[string]any {
 	t.Helper()
 
@@ -321,6 +342,89 @@ func TestUnknownSessionIsReported(t *testing.T) {
 
 	if ok, _ := out["ok"].(bool); ok {
 		t.Fatal("expected ok=false for an unknown session")
+	}
+}
+
+func TestBulkRemoveDeletesUsers(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+
+	const n = 300
+	users := make([]map[string]any, n)
+	for i := range users {
+		users[i] = map[string]any{
+			"name": "rm" + itoa(i), "password": "p", "server": "all", "profile": "default",
+		}
+	}
+	h.post(t, "/v1/bulk/user-add", map[string]any{"session": sess, "users": users, "concurrency": 16}, nil)
+	if h.mock.UserCount() != n {
+		t.Fatalf("setup: expected %d users, got %d", n, h.mock.UserCount())
+	}
+
+	ids := make([]string, 0, n)
+	for _, u := range h.mock.Users() {
+		ids = append(ids, u.ID)
+	}
+
+	out := h.post(t, "/v1/bulk/remove", map[string]any{
+		"session": sess, "ids": ids, "concurrency": 16,
+	}, nil)
+
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("bulk remove failed: %v", out["error"])
+	}
+	if removed, _ := out["removed"].(float64); int(removed) != n {
+		t.Fatalf("expected %d removed, got %v (errors: %v)", n, out["removed"], out["errors"])
+	}
+	if h.mock.UserCount() != 0 {
+		t.Fatalf("expected an empty router, got %d users", h.mock.UserCount())
+	}
+}
+
+func TestBulkRemoveDefaultsToHotspotUserRemove(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+
+	h.post(t, "/v1/bulk/user-add", map[string]any{
+		"session": sess, "users": []map[string]any{{"name": "solo", "password": "p"}},
+	}, nil)
+	ids := []string{h.mock.Users()[0].ID}
+
+	// No "command" field: the endpoint has to fall back to the hotspot user path.
+	out := h.post(t, "/v1/bulk/remove", map[string]any{"session": sess, "ids": ids}, nil)
+	if removed, _ := out["removed"].(float64); int(removed) != 1 {
+		t.Fatalf("expected 1 removed, got %v", out["removed"])
+	}
+	if h.mock.UserCount() != 0 {
+		t.Fatal("user was not removed")
+	}
+}
+
+func TestBulkRemoveRejectsUnsafeCommand(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+
+	for _, bad := range []string{"relative/path", "/ip/hotspot/user/remove =extra", "/reboot\nother"} {
+		resp := h.rawPost(t, "/v1/bulk/remove", map[string]any{
+			"session": sess, "command": bad, "ids": []string{"*1"},
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("command %q: expected 400, got %d", bad, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+}
+
+func TestBulkRemoveWithNoIDsIsANoOp(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+
+	out := h.post(t, "/v1/bulk/remove", map[string]any{"session": sess, "ids": []string{}}, nil)
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("expected ok=true for an empty id list, got %v", out)
+	}
+	if total, _ := out["total"].(float64); total != 0 {
+		t.Fatalf("expected total 0, got %v", out["total"])
 	}
 }
 

@@ -89,6 +89,7 @@ if (!isset($_SESSION["mikhmon"])) {
   $resethotspotuser = $_GET['reset-hotspot-user'];
   $removehotspotuserbycomment = $_GET['remove-hotspot-user-by-comment'];
   $removeexpiredhotspotuser = $_GET['remove-hotspot-user-expired'];
+  $removeunusedhotspotuser = $_GET['remove-unused-hotspot-user'];
   $enablehotspotuser = $_GET['enable-hotspot-user'];
   $disablehotspotuser = $_GET['disable-hotspot-user'];
   $enableipbinding = $_GET['enable-ip-binding'];
@@ -277,6 +278,12 @@ elseif ($removeexpiredhotspotuser != "") {
   include_once('./process/removeexpiredhotspotuser.php');
 }  
 
+// remove unused hotspot user older than N days (retention cleanup)
+elseif ($removeunusedhotspotuser != "") {
+  echo "<b class='cl-w'><i class='fa fa-circle-o-notch fa-spin' style='font-size:24px'></i> Processing...</b>";
+
+  include_once('./process/removeunusedhotspotuser.php');
+}
 // reset hotspot user
   elseif ($resethotspotuser != "") {
     echo "<b class='cl-w'><i class='fa fa-circle-o-notch fa-spin' style='font-size:24px'></i> Processing...</b>";

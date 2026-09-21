@@ -206,3 +206,6 @@ $_delete_report = '
 		        <li>It is recommended to download '.$_user_log.' first. </li>
 		      </ul>
 ';
+
+//Remove unused vouchers older than N days
+$_unused_older = "Unused > 30d";
