@@ -193,7 +193,38 @@ if (!isset($_SESSION["mikhmon"])) {
   </thead>
   <tbody id="tbody">
 <?php
-for ($i = 0; $i < $TotalReg; $i++) {
+// Only render one page of rows. The browser keeps every row it is given and
+// each one costs about 22 elements, so handing it a router with thousands of
+// users makes the tab allocate gigabytes and stutter while scrolling.
+$pf_per = isset($_GET['per']) ? (int) $_GET['per'] : 100;
+if ($pf_per < 10 || $pf_per > 1000) {
+  $pf_per = 100;
+}
+$pf_pages = $TotalReg > 0 ? (int) ceil($TotalReg / $pf_per) : 1;
+$pf_page = isset($_GET['page']) ? (int) $_GET['page'] : 1;
+if ($pf_page < 1) {
+  $pf_page = 1;
+}
+if ($pf_page > $pf_pages) {
+  $pf_page = $pf_pages;
+}
+$pf_offset = ($pf_page - 1) * $pf_per;
+$pf_end = min($pf_offset + $pf_per, $TotalReg);
+
+// Page links keep whichever filter brought the user here.
+$pf_base = "./?hotspot=users&session=" . $session;
+if ($prof != "") {
+  $pf_base .= "&profile=" . urlencode($prof);
+}
+if ($comm != "") {
+  $pf_base .= "&comment=" . urlencode($comm);
+}
+if ($exp == "1") {
+  $pf_base .= "&exp=1";
+}
+$pf_base .= "&per=" . $pf_per;
+
+for ($i = $pf_offset; $i < $pf_end; $i++) {
   $userdetails = $getuser[$i];
   $uid = $userdetails['.id'];
   $userver = $userdetails['server'];
@@ -261,8 +292,23 @@ for ($i = 0; $i < $TotalReg; $i++) {
 }
 ?>
   </tr>
-  </tbody>
 </table>
+<?php if ($pf_pages > 1) { ?>
+<div class="row" style="margin-top:10px;">
+  <div class="col-12 box-group" style="padding:8px 12px;">
+    <span class="pd-2p5"><?= $pf_offset + 1 ?>-<?= $pf_end ?> / <?= $TotalReg ?></span>
+    <?php if ($pf_page > 1) { ?>
+      <a class="btn bg-secondary" title="First" href="<?= $pf_base ?>&page=1"><i class="fa fa-angle-double-left"></i></a>
+      <a class="btn bg-secondary" title="Previous" href="<?= $pf_base ?>&page=<?= $pf_page - 1 ?>"><i class="fa fa-angle-left"></i></a>
+    <?php } ?>
+    <span class="pd-2p5"><?= $pf_page ?> / <?= $pf_pages ?></span>
+    <?php if ($pf_page < $pf_pages) { ?>
+      <a class="btn bg-secondary" title="Next" href="<?= $pf_base ?>&page=<?= $pf_page + 1 ?>"><i class="fa fa-angle-right"></i></a>
+      <a class="btn bg-secondary" title="Last" href="<?= $pf_base ?>&page=<?= $pf_pages ?>"><i class="fa fa-angle-double-right"></i></a>
+    <?php } ?>
+  </div>
+</div>
+<?php } ?>
 </div>
 </div>
 </div>
