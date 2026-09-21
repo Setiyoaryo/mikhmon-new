@@ -43,7 +43,25 @@ if (!isset($_SESSION["mikhmon"])) {
             </div>
               <div class="box-group-area">
                 <h3 >Profile : all<br>
-                <?php $countuser = $API->comm("/ip/hotspot/user/print", array("count-only" => ""));
+                <?php // Count every profile in ONE pass. Asking the router for a count-only per
+                // profile makes it walk the entire hotspot user table each time, so 11
+                // profiles meant 11 scans of all users. Fetching just the profile field
+                // once measures cheaper than even a single count-only, and the counts
+                // come out of that one reply.
+                $allusers = $API->comm("/ip/hotspot/user/print", array(".proplist" => "profile"));
+                $counts = array();
+                $countall = 0;
+                if (is_array($allusers)) {
+                  foreach ($allusers as $u) {
+                    $p = isset($u['profile']) ? $u['profile'] : "";
+                    if (!isset($counts[$p])) {
+                      $counts[$p] = 0;
+                    }
+                    $counts[$p]++;
+                    $countall++;
+                  }
+                }
+                $countuser = $countall;
                 if ($countuser < 2) {
                   echo $countuser . " Item";
                 } elseif ($countuser > 1) {
@@ -75,7 +93,7 @@ for ($i = 0; $i < $TotalReg; $i++) {
             </div>
               <div class="box-group-area">
                 <h3 >Profile : <?= $pname; ?><br>
-                <?php	$countuser = $API->comm("/ip/hotspot/user/print", array("count-only" => "", "?profile" => "$pname", ));
+                <?php	$countuser = isset($counts[$pname]) ? $counts[$pname] : 0;
                 if ($countuser < 2) {
                   echo $countuser . " Item";
                 } elseif ($countuser > 1) {

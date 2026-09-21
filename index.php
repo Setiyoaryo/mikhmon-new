@@ -197,6 +197,13 @@ switch ($hotspot) {
     ));
     break;
 
+  case "users-by-profile":
+    $API->prefetch(array(
+      "/ip/hotspot/user/profile/print",
+      array("/ip/hotspot/user/print", array(".proplist" => "profile")),
+    ));
+    break;
+
   case "ipbinding":
     $API->prefetch(array(
       "/ip/hotspot/ip-binding/print",
