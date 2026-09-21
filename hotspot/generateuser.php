@@ -119,6 +119,13 @@ date_default_timezone_set($_SESSION['timezone']);
 					$u[$i] = randNUC($userl);
 				} elseif ($char == "mix2") {
 					$u[$i] = randNULC($userl);
+				} elseif ($char == "num") {
+					// "num" is only offered in vc mode, but the dropdown keeps it
+					// selected when you switch vc -> up (it merely gets hidden), so
+					// reach it here. Without this branch the username stayed empty,
+					// RouterOS rejected every user, and the reply is not surfaced,
+					// so Generate just looked like it did nothing.
+					$u[$i] = randN($userl);
 				}
 				if ($userl == 3) {
 					$p[$i] = randN(3);
@@ -139,6 +146,11 @@ date_default_timezone_set($_SESSION['timezone']);
 
 			$bulkusers = array();
 			for ($i = 1; $i <= $qty; $i++) {
+				// Never send an empty username: RouterOS rejects it and the reply
+				// is not shown anywhere, so Generate would silently do nothing.
+				if (!isset($u[$i]) || $u[$i] === "") {
+					continue;
+				}
 				$bulkusers[] = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
@@ -213,6 +225,10 @@ date_default_timezone_set($_SESSION['timezone']);
 			}
 			$bulkusers = array();
 			for ($i = 1; $i <= $qty; $i++) {
+				// Same guard as "up" mode: never send an empty username.
+				if (!isset($u[$i]) || $u[$i] === "") {
+					continue;
+				}
 				$bulkusers[] = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
