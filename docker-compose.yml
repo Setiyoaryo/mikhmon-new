@@ -7,28 +7,6 @@ services:
       - "8080:8080"
     volumes:
       - mikhmon-data:/app/data
-    networks:
-      - mikhmon_network
-
-  # MikroTik RouterOS emulator (untuk testing)
-  routeros:
-    image: evilfreelancer/docker-routeros
-    container_name: mikrotik_test
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun
-    ports:
-      - "8728:8728"
-      - "8729:8729"
-      - "8081:80"
-    networks:
-      - mikhmon_network
 
 volumes:
   mikhmon-data:
-
-networks:
-  mikhmon_network:
-    driver: bridge

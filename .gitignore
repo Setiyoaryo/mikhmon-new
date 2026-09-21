@@ -1,12 +1,4 @@
-# Temporary & OS files
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
-.env
-
-# Go build artifacts (exclude root binary bin/voucher-generator so it can be deployed directly)
-cmd/voucher-generator/voucher-generator
-*.test
-*.out
+mikhmon
+*.exe
+data/
+config.json
