@@ -31,7 +31,10 @@ WORKDIR /var/www
 
 EXPOSE 80
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD wget --spider -q http://127.0.0.1/ || exit 1
+# Health check: this image only ships BusyBox wget, which does NOT support
+# --spider, so ask for the login page (a guaranteed 200) and throw the body
+# away. That also proves nginx -> php-fpm -> PHP all work.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -q -O /dev/null "http://127.0.0.1/admin.php?id=login" || exit 1
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf", "-n"]
