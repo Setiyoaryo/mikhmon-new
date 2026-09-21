@@ -99,6 +99,28 @@ if (!isset($_SESSION["mikhmon"])) {
     }
   }
 
+  // "Add Router" has no config.php line yet, so readcfg() leaves these empty.
+  // They are required inputs, and the old placeholder line used to prefill the
+  // same values, so prefill them here instead - in the form only. Nothing is
+  // written to config.php until Save.
+  $cfgIsAddForm = (!$cfgExists && ($cfgIsNew || ($session === "" && $router !== "")));
+  if ($cfgIsAddForm) {
+    if ($currency === "" || $currency === null) {
+      $currency = "Rp";
+    }
+    if ($areload === "" || $areload === null) {
+      $areload = 10;
+    }
+    if ($iface === "" || $iface === null) {
+      $iface = 1;
+    }
+    if ($idleto === "" || $idleto === null) {
+      $idleto = 10;
+    }
+    if ($livereport === "" || $livereport === null) {
+      $livereport = "disable";
+    }
+  }
   if (isset($_POST['save'])) {
 
     $clean = 'mikhmon_cfg_clean';
