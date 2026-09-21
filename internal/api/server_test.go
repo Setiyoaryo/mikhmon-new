@@ -441,3 +441,39 @@ func itoa(i int) string {
 	}
 	return string(b[pos:])
 }
+
+// A batched /v1/exec must return every reply. It used to answer with null
+// sentences for each request, which silently broke any caller that sent more
+// than one sentence at a time.
+func TestExecBatchReturnsEveryReply(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+
+	out := h.post(t, "/v1/exec", map[string]any{
+		"session": sess,
+		"sentences": [][]string{
+			{"/system/clock/print"},
+			{"/system/resource/print"},
+			{"/system/identity/print"},
+		},
+	}, nil)
+
+	if ok, _ := out["ok"].(bool); !ok {
+		t.Fatalf("exec failed: %v", out["error"])
+	}
+	results, _ := out["results"].([]any)
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for i, r := range results {
+		item, _ := r.(map[string]any)
+		sentences, _ := item["sentences"].([]any)
+		if len(sentences) == 0 {
+			t.Fatalf("result %d came back without sentences: %v", i, item)
+		}
+		last, _ := sentences[len(sentences)-1].([]any)
+		if len(last) == 0 || last[0] != "!done" {
+			t.Fatalf("result %d did not end with !done: %v", i, sentences)
+		}
+	}
+}

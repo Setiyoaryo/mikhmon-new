@@ -47,7 +47,7 @@ services:
     environment:
       MIKHMON_API_ADDR: ":8088"
       MIKHMON_API_MAX_CONN_PER_ROUTER: "32"
-      MIKHMON_API_IDLE_TIMEOUT: "60s"
+      MIKHMON_API_IDLE_TIMEOUT: "600s"
     # Internal-only: no "ports:" mapping, reachable only from php-fpm.
     expose:
       - "8088"

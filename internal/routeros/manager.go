@@ -185,20 +185,23 @@ func (m *Manager) PoolFor(sessionID string) (*Pool, error) {
 }
 
 // ExecBatch runs independent commands concurrently across the pool.
-// The result slice is index-aligned with cmds; a per-command error never
-// aborts the others.
-func (m *Manager) ExecBatch(sessionID string, concurrency int, timeout time.Duration, cmds [][]string) ([]error, error) {
+//
+// Both result slices are index-aligned with cmds, and a per-command error never
+// aborts the others. The replies are returned too: dropping them here made
+// every batched /v1/exec call answer with null sentences.
+func (m *Manager) ExecBatch(sessionID string, concurrency int, timeout time.Duration, cmds [][]string) ([][]Sentence, []error, error) {
 	pool, err := m.PoolFor(sessionID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if concurrency < 1 {
 		concurrency = 1
 	}
 
+	replies := make([][]Sentence, len(cmds))
 	errs := make([]error, len(cmds))
 	if len(cmds) == 0 {
-		return errs, nil
+		return replies, errs, nil
 	}
 
 	idx := make(chan int)
@@ -222,7 +225,8 @@ func (m *Manager) ExecBatch(sessionID string, concurrency int, timeout time.Dura
 				if timeout > 0 {
 					c.SetTimeout(timeout)
 				}
-				_, rerr := c.RunCommand(cmds[i]...)
+				r, rerr := c.RunCommand(cmds[i]...)
+				replies[i] = r
 				if rerr != nil {
 					pool.discard(c)
 					errs[i] = rerr
@@ -239,7 +243,7 @@ func (m *Manager) ExecBatch(sessionID string, concurrency int, timeout time.Dura
 	close(idx)
 	wg.Wait()
 
-	return errs, nil
+	return replies, errs, nil
 }
 
 // Stats reports pool counters, for the /healthz endpoint.

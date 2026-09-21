@@ -239,7 +239,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	errs, err := s.mgr.ExecBatch(req.Session, len(req.Sentences), timeout, req.Sentences)
+	replies, errs, err := s.mgr.ExecBatch(req.Session, len(req.Sentences), timeout, req.Sentences)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -247,7 +247,10 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]execResult, len(req.Sentences))
 	for i := range req.Sentences {
-		results[i] = execResult{Error: tolerantError(req.Sentences[i], errs[i])}
+		results[i] = execResult{
+			Sentences: toRaw(replies[i]),
+			Error:     tolerantError(req.Sentences[i], errs[i]),
+		}
 	}
 	writeExecResponse(w, results)
 }
@@ -426,7 +429,7 @@ func (s *Server) addVouchers(session string, concurrency int, timeout time.Durat
 		cmds[i] = cmd
 	}
 
-	errs, fatal := s.mgr.ExecBatch(session, concurrency, timeout, cmds)
+	_, errs, fatal := s.mgr.ExecBatch(session, concurrency, timeout, cmds)
 	if fatal != nil {
 		return map[string]any{
 			"ok":     false,
@@ -586,7 +589,7 @@ func (s *Server) handleBulkRemove(w http.ResponseWriter, r *http.Request) {
 		cmds[i] = []string{command, "=.id=" + id}
 	}
 
-	errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, s.execTimeout(req.TimeoutMS), cmds)
+	_, errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, s.execTimeout(req.TimeoutMS), cmds)
 	if fatal != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":      false,
@@ -728,7 +731,7 @@ func (s *Server) handleBulkRemoveByQuery(w http.ResponseWriter, r *http.Request)
 		cmds[i] = []string{removeCmd, "=.id=" + id}
 	}
 
-	errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, timeout, cmds)
+	_, errs, fatal := s.mgr.ExecBatch(req.Session, concurrency, timeout, cmds)
 	if fatal != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": false, "error": fatal.Error(), "matched": len(ids), "removed": 0, "failed": len(ids),

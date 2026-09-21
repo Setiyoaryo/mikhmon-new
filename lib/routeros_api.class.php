@@ -50,6 +50,7 @@ class RouterosAPI
     var $session   = null;  //  Session id handed out by the Go backend
     var $sentences = array(); // Completed sentences waiting for a read()
     var $pending   = array(); // Words of the sentence currently being built
+    var $memo      = array(); // Read results prefetched for this request
 
     /* Check, can be var used in foreach  */
     public function isIterable($var)
@@ -122,6 +123,7 @@ class RouterosAPI
         $this->session   = null;
         $this->sentences = array();
         $this->pending   = array();
+        $this->memo      = array();
         $this->connected = false;
         $this->error_no  = 0;
         $this->error_str = '';
@@ -396,6 +398,15 @@ class RouterosAPI
      */
     public function comm($com, $arr = array())
     {
+        // Answer from a prefetched batch when this exact read was asked for.
+        // Consumed once, so a later call re-reads the router as before.
+        $memoKey = $com . "\0" . serialize($arr);
+        if (array_key_exists($memoKey, $this->memo)) {
+            $hit = $this->memo[$memoKey];
+            unset($this->memo[$memoKey]);
+            return $hit;
+        }
+
         $count = count($arr);
         $this->write($com, !$arr);
         $i = 0;
@@ -421,6 +432,84 @@ class RouterosAPI
         return $this->read();
     }
 
+
+    /**
+     * Fetch several reads in one round trip, so comm() can answer without one.
+     *
+     * Every comm() is its own round trip to the router, and a page like the
+     * dashboard issues six of them before it can render. Those calls are
+     * independent, so they are asked for here as a single batch and the backend
+     * runs them in parallel. Results are remembered per command and parameter
+     * and handed out once by comm().
+     *
+     * This is best effort: anything not prefetched, or asked for with different
+     * parameters, falls through to a normal round trip.
+     *
+     * @param array $commands  list of commands, each a string or array($cmd, $params)
+     *
+     * @return void
+     */
+    public function prefetch($commands)
+    {
+        if ($this->session === null || !is_array($commands) || empty($commands)) {
+            return;
+        }
+
+        $sentences = array();
+        $keys = array();
+
+        foreach ($commands as $c) {
+            $com = is_array($c) ? $c[0] : $c;
+            $arr = (is_array($c) && isset($c[1]) && is_array($c[1])) ? $c[1] : array();
+            $key = $com . "\0" . serialize($arr);
+            if (array_key_exists($key, $this->memo)) {
+                continue;
+            }
+            $words = array($com);
+            foreach ($arr as $k => $v) {
+                switch (substr($k, 0, 1)) {
+                    case "?":
+                        $words[] = "$k=$v";
+                        break;
+                    case "~":
+                        $words[] = "$k~$v";
+                        break;
+                    default:
+                        $words[] = "=$k=$v";
+                        break;
+                }
+            }
+            $sentences[] = $words;
+            $keys[] = $key;
+        }
+
+        if (empty($sentences)) {
+            return;
+        }
+
+        $response = mikhmon_api_post('/v1/exec', array(
+            'session'    => $this->session,
+            'sentences'  => $sentences,
+            'timeout_ms' => $this->timeoutMs(),
+        ), mikhmon_api_exec_timeout());
+
+        if (!is_array($response) || empty($response['ok']) || !isset($response['results'])) {
+            return;
+        }
+
+        foreach ($response['results'] as $i => $result) {
+            if (!isset($keys[$i]) || empty($result['sentences'])) {
+                continue;
+            }
+            $flat = array();
+            foreach ($result['sentences'] as $sentence) {
+                foreach ($sentence as $word) {
+                    $flat[] = $word;
+                }
+            }
+            $this->memo[$keys[$i]] = $this->parseResponse($flat);
+        }
+    }
 
     /**
      * Close the current sentence and queue it for the next read().

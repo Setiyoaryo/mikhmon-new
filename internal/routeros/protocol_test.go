@@ -194,7 +194,7 @@ func TestExecBatchRunsInParallel(t *testing.T) {
 		cmds[i] = []string{"/ip/hotspot/user/add", "=name=u" + itoa(i), "=password=p" + itoa(i)}
 	}
 
-	errs, fatal := mgr.ExecBatch(sess.ID, 16, 5*time.Second, cmds)
+	_, errs, fatal := mgr.ExecBatch(sess.ID, 16, 5*time.Second, cmds)
 	if fatal != nil {
 		t.Fatalf("exec batch: %v", fatal)
 	}

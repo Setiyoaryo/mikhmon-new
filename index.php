@@ -71,8 +71,18 @@ if (!isset($_SESSION["mikhmon"])) {
   $API->debug = false;
   $API->connect($iphost, $userhost, decrypt($passwdhost));
 
-  $getidentity = $API->comm("/system/identity/print");
-  $identity = $getidentity[0]['name'];
+  // The router identity is a static setting, but it was re-read on every page
+  // load - one router round trip per menu click. Keep it for the session, and
+  // re-read only when the user switches to a different router.
+  if (isset($_SESSION['mikhmon_identity']) && $_SESSION['mikhmon_identity'] !== ""
+      && isset($_SESSION['mikhmon_identity_session']) && $_SESSION['mikhmon_identity_session'] === $session) {
+    $identity = $_SESSION['mikhmon_identity'];
+  } else {
+    $getidentity = $API->comm("/system/identity/print");
+    $identity = isset($getidentity[0]['name']) ? $getidentity[0]['name'] : "";
+    $_SESSION['mikhmon_identity'] = $identity;
+    $_SESSION['mikhmon_identity_session'] = $session;
+  }
   
 
 // get variable
@@ -134,6 +144,79 @@ if (!isset($_SESSION["mikhmon"])) {
 };
 </script>';
 
+
+// Prefetch the reads this page is about to ask for, as one batch.
+//
+// Every comm() is its own round trip to the router and they run one after the
+// other, so a page that reads six things waits for six round trips before it
+// can render - the dashboard does exactly that. The same reads are independent
+// of each other, so they are requested here in a single call and the backend
+// runs them in parallel; comm() then answers from what came back.
+//
+// Best effort: a command that is not listed, or that this page asks for with
+// different parameters, simply does its own round trip as before.
+$pfcount = array("count-only" => "");
+switch ($hotspot) {
+  case "":
+  case "dashboard":
+    $API->prefetch(array(
+      "/system/clock/print",
+      "/system/resource/print",
+      "/system/routerboard/print",
+      "/interface/print",
+      array("/ip/hotspot/user/print", $pfcount),
+      array("/ip/hotspot/active/print", $pfcount),
+    ));
+    break;
+
+  case "users":
+    $API->prefetch(array(
+      "/ip/hotspot/user/profile/print",
+    ));
+    break;
+
+  case "user-profiles":
+    $API->prefetch(array(
+      "/ip/hotspot/user/profile/print",
+      array("/ip/hotspot/user/print", $pfcount),
+      array("/system/scheduler/print", $pfcount),
+    ));
+    break;
+
+  case "hosts":
+    $API->prefetch(array(
+      "/ip/hotspot/host/print",
+      array("/ip/hotspot/host/print", $pfcount),
+    ));
+    break;
+
+  case "cookies":
+    $API->prefetch(array(
+      "/ip/hotspot/cookie/print",
+      array("/ip/hotspot/cookie/print", $pfcount),
+    ));
+    break;
+
+  case "ipbinding":
+    $API->prefetch(array(
+      "/ip/hotspot/ip-binding/print",
+      array("/ip/hotspot/ip-binding/print", $pfcount),
+    ));
+    break;
+
+  case "dhcp-leases":
+    $API->prefetch(array(
+      "/ip/dhcp-server/lease/print",
+      array("/ip/dhcp-server/lease/print", $pfcount),
+    ));
+    break;
+
+  case "traffic-monitor":
+    $API->prefetch(array(
+      "/interface/print",
+    ));
+    break;
+}
 
 // logout
   if ($hotspot == "logout") {
