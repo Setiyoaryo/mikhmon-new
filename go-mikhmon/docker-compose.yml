@@ -1,0 +1,38 @@
+# Mikhmon Go — Docker Compose for VPS
+# Replace seluruh PHP+Nginx stack dengan single Go binary
+#
+# Usage:
+#   cd go-mikhmon
+#   docker compose up -d
+#
+# Atau dengan Traefik (VPS):
+#   Uncomment labels section di bawah
+
+services:
+  mikhmon:
+    build: .
+    container_name: mikhmon-go
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - mikhmon-data:/app/data
+    # Uncomment untuk Traefik di VPS:
+    # networks:
+    #   - proxy
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.docker.network=proxy"
+    #   - "traefik.http.routers.mikhmon.rule=Host(`taufiq.nocify.id`)"
+    #   - "traefik.http.routers.mikhmon.entrypoints=websecure"
+    #   - "traefik.http.routers.mikhmon.tls=true"
+    #   - "traefik.http.services.mikhmon.loadbalancer.server.port=8080"
+
+volumes:
+  mikhmon-data:
+
+# Uncomment untuk Traefik:
+# networks:
+#   proxy:
+#     external: true
+#     name: proxy

@@ -1,0 +1,27 @@
+# Mikhmon Go — Production VPS dengan Traefik
+# Langsung pakai: docker compose -f docker-compose.vps.yml up -d
+
+services:
+  mikhmon:
+    build: .
+    container_name: mikhmon-go
+    restart: unless-stopped
+    volumes:
+      - mikhmon-data:/app/data
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.mikhmon.rule=Host(`taufiq.nocify.id`)"
+      - "traefik.http.routers.mikhmon.entrypoints=websecure"
+      - "traefik.http.routers.mikhmon.tls=true"
+      - "traefik.http.services.mikhmon.loadbalancer.server.port=8080"
+
+volumes:
+  mikhmon-data:
+
+networks:
+  proxy:
+    external: true
+    name: proxy
