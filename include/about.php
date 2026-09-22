@@ -22,6 +22,9 @@ if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
 }
+
+/* Langganan: dipakai untuk baris status dan tautan WhatsApp di bawah. */
+include_once(dirname(__FILE__) . '/subscription.php');
 ?>
 <style>
 .iFWrapper {
@@ -46,35 +49,65 @@ if (!isset($_SESSION["mikhmon"])) {
         <h3><i class="fa fa-info-circle"></i> About</h3>
       </div>
       <div class="card-body">
-        <h3>MIKHMON V<?= $_SESSION['v']; ?></h3>
+        <h3>MIKHMON NOCIFY v<?= $_SESSION['v']; ?></h3>
 <p>
-  Aplikasi ini dipersembahkan untuk pengusaha hotspot di manapun Anda berada.
-  Semoga makin sukses.
+  Ini adalah <b>hasil fork</b> dari MIKHMON V3. Tampilan dan alur kerjanya
+  sengaja dibiarkan sama persis dengan aslinya, hanya bagian API/backend-nya
+  yang ditulis ulang supaya lebih cepat dan sanggup menangani ribuan voucher.
+  Versi ini dikembangkan, dipelihara, dan disewakan oleh <b>NOCIFY</b>.
 </p>
 <p>
   <ul>
     <li>
-      Author : Laksamadi Guko
+      <b>Asli &mdash; MIKHMON V3</b>
+      <ul>
+        <li>Author : Laksamadi Guko</li>
+        <li>Licence : <a href="https://github.com/laksa19/mikhmonv2/blob/master/LICENSE">GPLv2</a></li>
+        <li>API Class : <a href="https://github.com/BenMenking/routeros-api">routeros-api</a></li>
+        <li>Website : <a href="https://laksa19.github.io">laksa19.github.io</a></li>
+        <li>Facebook : <a href="https://fb.com/laksamadi">fb.com/laksamadi</a></li>
+      </ul>
     </li>
-    <li>
-      Licence : <a href="https://github.com/laksa19/mikhmonv2/blob/master/LICENSE">GPLv2</a>
-    </li>
-    <li>
-      API Class : <a href="https://github.com/BenMenking/routeros-api">routeros-api</a>
-    </li>
-    <li>
-      Website : <a href="https://laksa19.github.io">laksa19.github.io</a>
-    </li>
-    <li>
-      Facebook : <a href="https://fb.com/laksamadi">fb.com/laksamadi</a>
+    <li style="margin-top:8px">
+      <b>Fork ini &mdash; NOCIFY</b>
+      <ul>
+        <li>Author : NOCIFY</li>
+        <li>WhatsApp : <a href="<?= htmlspecialchars(mikhmon_wa_link("Halo NOCIFY, saya mau tanya soal Mikhmon."), ENT_QUOTES) ?>" target="_blank" rel="noopener">0851-3949-5106</a></li>
+        <li>Backend : Go (rewrite), antarmuka tetap PHP seperti aslinya</li>
+      </ul>
     </li>
   </ul>
 </p>
 <p>
-  Terima kasih untuk semua yang telah mendukung pengembangan MIKHMON.
+  Terima kasih untuk Laksamadi Guko sebagai pembuat MIKHMON, dan untuk semua
+  yang telah mendukung pengembangannya.
 </p>
 <div>
-    <i>Copyright &copy; <i> 2018 Laksamadi Guko</i></i>
+    <i>Copyright &copy; 2018 Laksamadi Guko &mdash; fork &copy; <?= date("Y") ?> NOCIFY</i>
+</div>
+<p style="margin-top:14px">
+  <a class="btn bg-success" style="color:#fff"
+     href="<?= htmlspecialchars(mikhmon_wa_link("Halo NOCIFY, saya mau tanya soal Mikhmon."), ENT_QUOTES) ?>"
+     target="_blank" rel="noopener"><i class="fa fa-whatsapp"></i> Chat WhatsApp</a>
+  <a class="btn bg-info" style="color:#fff" href="./admin.php?id=subscription"><i class="fa fa-credit-card"></i> Halaman Langganan</a>
+</p>
+<div class="box <?= mikhmon_license_status()['state'] == 'expired' ? 'bg-danger' : (mikhmon_license_warn() ? 'bg-warning' : 'bg-info') ?>" style="margin-left:0">
+  <?php $sub_a = mikhmon_license_status(); ?>
+  <?php if (!$sub_a['licensed']) { ?>
+    Belum ada lisensi terpasang. <a href="./admin.php?id=subscription">Aktifkan langganan</a>.
+  <?php } else { ?>
+    Langganan <b><?= htmlspecialchars($sub_a['plan_label'], ENT_QUOTES) ?></b>
+    berlaku sampai <b><?= htmlspecialchars($sub_a['expires'], ENT_QUOTES) ?></b>
+    <?php
+      if ((int) $sub_a['days'] >= 0) {
+        echo '(' . (int) $sub_a['days'] . ' hari lagi)';
+      } else {
+        echo '&mdash; <b>sudah berakhir ' . abs((int) $sub_a['days']) . ' hari lalu</b>';
+      }
+    ?>.
+    <a href="./admin.php?id=subscription">Perpanjang</a>.
+  <?php } ?>
+</div>
 </div>
 </div>
 </div>

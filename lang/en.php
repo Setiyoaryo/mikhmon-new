@@ -4,6 +4,7 @@ $langname = "English";
 $language = "Language";
 
 $_about = "About";
+$_subscription = "Subscription";
 $_action = "Action";
 $_add = "Add";
 $_add_router = "Add Router";

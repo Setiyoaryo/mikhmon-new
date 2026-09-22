@@ -15,3 +15,10 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+
+# Per-installation data: NOCIFY licence (install id + key). Never commit this.
+include/license.php
+include/license.php.*.tmp
+include/license-secret.php
+*.tmp
+*.tmp

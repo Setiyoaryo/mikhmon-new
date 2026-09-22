@@ -4,6 +4,7 @@ $langname = "Türkçe";
 $language = "Dil";
 
 $_about = "Hakkında";
+$_subscription = "Abonelik";
 $_action = "Aksiyon";
 $_add = "Ekle";
 $_add_router = "Yönlendirici Ekle";

@@ -4,6 +4,7 @@ $langname = "Indonesia";
 $language = "Bahasa";
 
 $_about = "Tentang";
+$_subscription = "Langganan";
 $_action = "Aksi";
 $_add_router = "Tambah Router";
 $_add = "Tambah";

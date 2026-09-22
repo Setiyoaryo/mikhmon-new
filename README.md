@@ -81,6 +81,113 @@ traffic happens.
 5. **`cmd/mockrouteros`** — a fake RouterOS API endpoint for testing without a
    real MikroTik device. See `docker/README.md`.
 
+#### Fork NOCIFY - langganan bulanan (sewa per bulan)
+
+Panel ini disewakan per bulan. Versi ini menambahkan sistem lisensi sederhana,
+halaman status langganan, dan pembayaran lewat QRIS GoPay Merchant.
+
+**Halaman baru: Langganan**
+
+Masuk lewat menu `Langganan` di sidebar, atau langsung:
+
+- `?hotspot=subscription&session=<sesi>` (dari dalam sesi router)
+- `admin.php?id=subscription` (dari daftar router)
+
+Isinya: status lisensi, tanggal berakhir, sisa hari, ID Instalasi, gambar QRIS
+merchant, daftar paket, tombol WhatsApp, dan kolom aktivasi lisensi.
+
+**Cara kerja lisensi**
+
+- Kode lisensi berbentuk `MKN-YYYYMMDD-PAKET-SIGNATURE`. Tanda tangannya
+  HMAC-SHA256 dari tanggal + paket + ID Instalasi, memakai kunci rahasia di
+  `include/subscription.php`.
+- Kode terikat ke **ID Instalasi** (12 karakter, dibuat otomatis dan disimpan di
+  `include/license.php`). Kode milik satu instalasi tidak berlaku di instalasi lain.
+- Status: `trial` (belum ada lisensi - panel **tidak** dikunci), `active`,
+  `warning` (sisa <= 7 hari), `grace` (lewat <= 3 hari), `expired` (dikunci).
+
+**Kalau lisensi kedaluwarsa**
+
+Panel dikunci dan semua halaman dialihkan ke halaman Langganan. Yang selalu tetap
+bisa dibuka: login, logout, dan halaman Langganan itu sendiri - jadi pelanggan
+tidak pernah terjebak dan bisa memperpanjang sendiri.
+
+Untuk mematikan penguncian sepenuhnya, ubah `MIKHMON_LICENSE_ENFORCE` jadi `false`
+di `include/subscription.php`. Menghapus `include/license.php` juga mengembalikan
+panel ke mode `trial`.
+
+**Membuat kode lisensi untuk pelanggan**
+
+1. Minta pelanggan membuka menu Langganan dan menyebutkan **ID Instalasi**-nya.
+2. Jalankan salah satu:
+
+```
+php tools/mikhmon-keygen.php --id=A1B2-C3D4-E5F6 --plan=P1M
+php tools/mikhmon-keygen.php --id=A1B2C3D4E5F6 --plan=P3M --from=2025-01-01
+php tools/mikhmon-keygen.php --list
+php tools/mikhmon-keygen.php --check=MKN-20251231-P1M-A1B2C3D4 --id=A1B2C3D4E5F6
+```
+
+3. Kirim kode hasilnya ke pelanggan untuk ditempel di kolom Aktivasi Lisensi.
+
+`--id=*` membuat kode yang berlaku di instalasi mana pun (untuk panel Anda
+sendiri). Paket `LIFE` = permanen.
+
+> `tools/mikhmon-keygen.php` memegang kunci rahasia, jadi jangan ditaruh di server
+> pelanggan. Jalankan di komputer/VPS Anda sendiri.
+
+**Kunci rahasia - WAJIB diganti sebelum menjual**
+
+Kunci rahasia bawaan ada di dalam repo, dan repo ini publik. Selama masih
+memakai nilai bawaan, siapa pun yang menemukan repo ini bisa membuat kode
+lisensi yang sah untuk instalasi mana pun. Buat file
+`include/license-secret.php` (sudah masuk `.gitignore`):
+
+```php
+<?php define('MIKHMON_LICENSE_SECRET', 'kunci-rahasia-anda-yang-panjang');
+```
+
+File yang **sama** harus ada di setiap instalasi pelanggan, karena panel
+memakai kunci itu untuk memeriksa kode lisensi. `tools/mikhmon-keygen.php`
+membaca file yang sama, jadi kode yang dihasilkan selalu cocok.
+
+Jangan mengubah kunci setelah kode lisensi beredar: semua kode lama langsung
+tidak berlaku.
+
+Perlu diingat, pelanggan tetap bisa membaca file itu di server mereka sendiri.
+Jadi ini menutup orang luar yang menemukan repo, bukan pelanggan yang
+berkeras ingin membobol panelnya sendiri.
+
+**Harga paket**
+
+Harga diatur di `include/subscription.php`, fungsi `mikhmon_license_plans()`.
+Harga `0` tampil sebagai "Hubungi Admin", jadi belum ada angka yang salah tampil
+ke pelanggan sampai Anda mengisinya.
+
+**Gambar QRIS**
+
+Unggah foto QRIS GoPay Merchant lewat bagian "Gambar QRIS merchant" di halaman
+Langganan (PNG/JPG/WEBP, maksimal 2 MB). Tersimpan sebagai `img/qris-merchant.*`.
+
+QRIS-nya statis (bukan QRIS dinamis dari payment gateway), jadi tidak ada
+notifikasi pembayaran otomatis: pelanggan membayar, menekan tombol "Konfirmasi
+Pembayaran via WhatsApp" yang sudah berisi ID Instalasi, lalu Anda mengirim kode
+lisensinya secara manual.
+
+**Batasan yang perlu diketahui**
+
+Ini penangkal, bukan DRM. Pelanggan yang punya akses ke file panel selalu bisa
+menghapus `include/license.php` untuk kembali ke mode `trial`, atau mengubah
+`MIKHMON_LICENSE_ENFORCE`. Yang benar-benar mengikat adalah perjanjian sewanya.
+Kalau butuh proteksi lebih kuat, lisensi harus diverifikasi ke server Anda.
+
+**About**
+
+`include/about.php` diubah: sekarang menyebutkan bahwa ini hasil fork MIKHMON V3,
+tetap mencantumkan Laksamadi Guko sebagai penulis asli (wajib GPLv2), dan
+menambahkan NOCIFY sebagai penulis versi ini beserta tombol WhatsApp ke
+0851-3949-5106.
+
 #### Update 06-30 2021 V3.20
 1. Perbaikan typo script profile ```on-login```.
 	- Silakan update user profile dari Mikhmon, dengan cara membuka tiap user profile, kemudian klik Save.

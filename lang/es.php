@@ -4,6 +4,7 @@ $langname = "Spanish";
 $language = "Language";
 // Translator Fernando Sepulveda
 $_about = "Acerca";
+$_subscription = "Suscripción";
 $_action = "Acción";
 $_add = "Anadir Usuarios";
 $_add_router = "Añadir Router";

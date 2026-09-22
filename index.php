@@ -46,6 +46,16 @@ if (!isset($_SESSION["mikhmon"])) {
   include('./include/lang.php');
   include('./lang/'.$langid.'.php');
 
+// Subscription gate - see include/subscription.php. An expired licence locks the
+// panel; the subscription page itself stays reachable so it can be renewed from
+// inside the panel, and logout always works.
+  include_once(dirname(__FILE__) . '/include/subscription.php');
+  $gate = isset($_GET['hotspot']) ? $_GET['hotspot'] : "";
+  if (mikhmon_license_locked() && $gate != "subscription" && $gate != "logout") {
+    header("Location: ./admin.php?id=subscription" . ($session != "" ? "&session=" . urlencode($session) : ""));
+    exit;
+  }
+
 // quick bt
   include('./include/quickbt.php');
 
@@ -258,6 +268,11 @@ switch ($hotspot) {
   }
 
 // about
+// subscription
+  elseif ($hotspot == "subscription") {
+    include_once('./subscription/index.php');
+  }
+
   elseif ($hotspot == "about") {
     include_once('./include/about.php');
   }

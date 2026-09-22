@@ -19,6 +19,9 @@ session_start();
 
 error_reporting(0);
 
+/* Langganan: endpoint ini dijaga juga, bukan hanya index.php/admin.php. */
+include_once(dirname(__FILE__) . '/../include/licenseguard.php');
+
 ob_start("ob_gzhandler");
 
 if (!isset($_SESSION["mikhmon"])) {

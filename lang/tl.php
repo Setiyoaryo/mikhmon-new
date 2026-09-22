@@ -4,6 +4,7 @@ $langname = "Tagalog";
 $language = "Language";
 //translator REGO KIER MONGOSERA
 $_about = "Tungkol";
+$_subscription = "Subskripsyon";
 $_action = "Gawa";
 $_add = "mag add";
 $_add_router = "Magadd ng Router";

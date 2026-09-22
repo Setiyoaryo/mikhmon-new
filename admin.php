@@ -65,10 +65,12 @@ include('./include/readcfg.php');
 
 include_once('./lib/routeros_api.class.php');
 include_once('./lib/formatbytesbites.php');
+
+include_once(dirname(__FILE__) . '/include/subscription.php');
 ?>
     
 <?php
-if ($id == "login" || substr($url, -1) == "p") {
+if ($id == "login" || ($id == "" && substr($url, -1) == "p")) {
 
   if (isset($_POST['login'])) {
     $user = $_POST['user'];
@@ -87,6 +89,8 @@ if ($id == "login" || substr($url, -1) == "p") {
   include_once('./include/login.php');
 } elseif (!isset($_SESSION["mikhmon"])) {
   echo "<script>window.location='./admin.php?id=login'</script>";
+} elseif (mikhmon_license_locked() && $id != "subscription" && $id != "logout") {
+  echo "<script>window.location='./admin.php?id=subscription'</script>";
 } elseif (substr($url, -1) == "/" || substr($url, -4) == ".php") {
   echo "<script>window.location='./admin.php?id=sessions'</script>";
 
@@ -154,6 +158,9 @@ if ($id == "login" || substr($url, -1) == "p") {
   }
   fclose($f);
   echo "<script>window.location='./admin.php?id=sessions'</script>";
+} elseif ($id == "subscription") {
+  include_once('./include/menu.php');
+  include_once('./subscription/index.php');
 } elseif ($id == "about") {
   include_once('./include/menu.php');
   include_once('./include/about.php');

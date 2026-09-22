@@ -15,6 +15,10 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
+
+/* Langganan: dipakai oleh gerbang menu dan pita peringatan di bawah. Dimuat di
+ * luar blok sesi supaya menu.php tetap aman dipanggil saat belum login. */
+include_once(dirname(__FILE__) . '/subscription.php');
 session_start();
 // hide all error
 error_reporting(0);
@@ -24,6 +28,7 @@ if (!isset($_SESSION["mikhmon"])) {
 } else {
 
   include ('./include/version.php');
+
 
   $btnmenuactive = "font-weight: bold;background-color: #f9f9f9; color: #000000";
   if ($hotspot == "dashboard" || substr(end(explode("/", $url)), 0, 8) == "?session") {
@@ -136,6 +141,9 @@ if (!isset($_SESSION["mikhmon"])) {
   } elseif ($userbyname != "") {
     $mpage = $_users;
     $susers = "active";
+  } elseif ($hotspot == "subscription" || $id == "subscription") {
+    $mpage = $_subscription;
+    $ssubscription = "active";
   } elseif ($hotspot == "about") {
     $mpage = $_about;
     $sabout = "active";
@@ -220,6 +228,7 @@ if($idleto != "disable"){
 } ?>  
   <a href="./admin.php?id=sessions" class="menu <?= $ssesslist; ?>"><i class="fa fa-gear"></i> <?= $_admin_settings ?></a>
   <a href="./admin.php?id=settings&router=new-<?= rand(1111,9999) ?>" class="menu <?= $snsettings ?>"><i class="fa fa-plus"></i> <?= $_add_router ?></a>
+  <a href="./admin.php?id=subscription" class="menu <?= $ssubscription; ?>"><i class="fa fa-credit-card"></i> <?= $_subscription ?></a>
   <a href="./admin.php?id=about" class="menu <?= $sabout; ?>"><i class="fa fa-info-circle"></i> <?= $_about ?></a>
 
 </div>
@@ -356,6 +365,8 @@ include('./info.php');
   <a href="./?hotspot=uplogo&session=<?= $session; ?>" class="menu <?= $uplogo; ?>"> <i class="fa fa-upload "></i> <?= $_upload_logo ?> </a>
   <a href="./?hotspot=template-editor&template=default&session=<?= $session; ?>" class="menu <?= $teditor; ?>"> <i class="fa fa-edit "></i> <?= $_template_editor ?> </a>          
   </div>
+  <!--subscription-->
+  <a href="./admin.php?id=subscription&session=<?= $session; ?>" class="menu <?= $ssubscription; ?>"><i class="fa fa-credit-card"></i> <?= $_subscription ?></a>
   <!--about-->
   <a href="./?hotspot=about&session=<?= $session; ?>" class="menu <?= $sabout; ?>"><i class="fa fa-info-circle"></i> <?= $_about ?></a>
 
@@ -380,6 +391,7 @@ include('./include/info.php');
 
 <div id="main">  
 <div id="loading" class="lds-dual-ring"></div>
+<?= mikhmon_license_banner(); ?>
 <?php if($hotspot == 'template-editor' || $id == 'editor'){
 echo '<div class="main-container">';
 }else{

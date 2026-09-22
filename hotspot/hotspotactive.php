@@ -18,6 +18,9 @@
 session_start();
 // hide all error
 error_reporting(0);
+
+/* Langganan: endpoint ini dijaga juga, bukan hanya index.php/admin.php. */
+include_once(dirname(__FILE__) . '/../include/licenseguard.php');
 if (!isset($_SESSION["mikhmon"])) {
 	header("Location:../admin.php?id=login");
 } else {
