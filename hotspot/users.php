@@ -24,51 +24,52 @@ if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
 
-  if ($prof == "all") {
-    $getuser = $API->comm("/ip/hotspot/user/print");
-    $TotalReg = count($getuser);
+  /*
+   * Seluruh daftar user diambil sekali - dari simpanan sementara kalau masih
+   * segar - lalu disaring di sini.
+   *
+   * Sebelumnya tiap filter diambil sendiri-sendiri dari router, dan tiap
+   * pengambilan berarti router mengirim ulang SELURUH daftar. Di pemasangan
+   * yang sudah berisi puluhan ribu user itu berarti beberapa detik untuk tiap
+   * klik; halaman ini pun jadi menunggu lama hanya untuk berpindah halaman
+   * atau mengganti filter.
+   *
+   * Menyaring di PHP menghasilkan daftar yang sama persis: saringan profile,
+   * comment, dan limit-uptime di router hanya mencocokkan nilai yang sama pada
+   * baris yang sama.
+   */
+  include_once(dirname(__FILE__) . '/../include/hscache.php');
+  $semuauser = mikhmon_hscache_hotspot_users($API, $session);
 
-    $counttuser = $API->comm("/ip/hotspot/user/print", array(
-      "count-only" => ""
-    ));
-
-  } elseif ($prof != "all") {
-    $getuser = $API->comm("/ip/hotspot/user/print", array(
-      "?profile" => "$prof",
-    ));
-    $TotalReg = count($getuser);
-
-    $counttuser = $API->comm("/ip/hotspot/user/print", array(
-      "count-only" => "",
-      "?profile" => "$prof",
-    ));
-
-  }
-  if ($comm != "") {
-    $getuser = $API->comm("/ip/hotspot/user/print", array(
-      "?comment" => "$comm",
-    //"?uptime" => "00:00:00"
-    ));
-    $TotalReg = count($getuser);
-
-    $counttuser = $API->comm("/ip/hotspot/user/print", array(
-      "count-only" => "",
-      "?comment" => "$comm",
-    ));
-    
-  }
   $exp = $_GET['exp'];
   if ($exp != "") {
-    $getuser = $API->comm("/ip/hotspot/user/print", array(
-      "?limit-uptime" => "1s",
-    ));
-    
-    $counttuser = $API->comm("/ip/hotspot/user/print", array(
-      "count-only" => "",
-      "?limit-uptime" => "1s",
-    ));
-    
+    /* Hanya user yang masa pakainya sudah habis (limit-uptime 1s). */
+    $getuser = array();
+    foreach ($semuauser as $u) {
+      if (isset($u['limit-uptime']) && $u['limit-uptime'] === '1s') {
+        $getuser[] = $u;
+      }
+    }
+  } elseif ($comm != "") {
+    $getuser = array();
+    foreach ($semuauser as $u) {
+      if (isset($u['comment']) && $u['comment'] === $comm) {
+        $getuser[] = $u;
+      }
+    }
+  } elseif ($prof != "all") {
+    $getuser = array();
+    foreach ($semuauser as $u) {
+      if (isset($u['profile']) && $u['profile'] === $prof) {
+        $getuser[] = $u;
+      }
+    }
+  } else {
+    $getuser = $semuauser;
   }
+
+  $TotalReg = count($getuser);
+  $counttuser = $TotalReg;
   $getprofile = $API->comm("/ip/hotspot/user/profile/print");
   $TotalReg2 = count($getprofile);
 }

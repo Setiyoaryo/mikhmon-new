@@ -142,6 +142,21 @@ if (!isset($_SESSION["mikhmon"])) {
   $report = $_GET['report'];
   $removereport = $_GET['remove-report'];
   $minterface = $_GET['interface'];
+/*
+ * Permintaan yang mengubah data user hotspot membuang simpanan sementara
+ * daftar user (include/hscache.php). Tanpa ini, user yang baru dihapus masih
+ * tampil - dan user yang baru dibuat belum muncul - sampai masa simpannya
+ * habis. Menyimpannya untuk semua perubahan, bukan hanya yang di halaman
+ * Users, karena user juga bisa dibuat lewat halaman Add, Generate, dan Quick
+ * Print.
+ */
+include_once(dirname(__FILE__) . '/include/hscache.php');
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    || $removehotspotuser != "" || $removehotspotusers != "" || $removehotspotuserbycomment != ""
+    || $removeexpiredhotspotuser != "" || $removeunusedhotspotuser != ""
+    || $enablehotspotuser != "" || $disablehotspotuser != "" || $resethotspotuser != "") {
+  mikhmon_hscache_clear();
+}
 
 
   $pagehotspot = array('users','hosts','ipbinding','cookies','log','dhcp-leases');
