@@ -108,6 +108,7 @@ func main() {
 		QRISMerchant: env("MIKHMON_PORTAL_QRIS_MERCHANT", "NOCIFY, SOFTWARE"),
 		QRISNMID:     env("MIKHMON_PORTAL_QRIS_NMID", "ID1026599320839"),
 		WANumber:     env("MIKHMON_PORTAL_WA", "6285139495106"),
+		Enroll:       envBool("MIKHMON_PORTAL_ENROLL", true),
 		Auth: portal.NewAuth(
 			env("MIKHMON_PORTAL_ADMIN_USER", "admin"),
 			password,

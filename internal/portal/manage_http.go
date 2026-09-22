@@ -251,3 +251,41 @@ func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+/*
+ * handleEnroll mendaftarkan panel yang baru dipasang.
+ *
+ * Sengaja tanpa login: panelnya sendiri yang melapor saat pertama kali
+ * dijalankan, supaya tidak ada berkas berisi id dan token yang harus diisi
+ * tangan di tiap VPS pelanggan. Yang dihasilkan cuma sebuah identitas panel -
+ * tidak bisa dipakai untuk melihat atau mengubah apa pun kecuali melapor
+ * statusnya sendiri, dan pemilik portal bisa menghapusnya dari halaman admin.
+ */
+func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Enroll {
+		writeErr(w, http.StatusForbidden, "enroll_disabled")
+		return
+	}
+	var req struct {
+		Host    string `json:"host"`
+		Version string `json:"version"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request")
+		return
+	}
+	inst, err := s.store.EnrollInstance(req.Host, req.Version)
+	if err != nil {
+		log.Printf("gagal mendaftarkan panel: %v", err)
+		writeErr(w, http.StatusInternalServerError, "store_error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok": true,
+		"instance": map[string]any{
+			"id":    inst.ID,
+			"token": inst.Token,
+			"name":  inst.Name,
+		},
+	})
+}

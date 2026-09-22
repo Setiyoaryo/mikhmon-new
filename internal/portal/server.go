@@ -22,11 +22,14 @@ var web embed.FS
 
 // Config adalah pengaturan server portal.
 type Config struct {
-	Addr         string
-	DBPath       string
-	WebDir       string // kalau diisi, dipakai sebagai ganti yang di-embed
-	BaseURL      string
-	QRISImage    string
+	Addr      string
+	DBPath    string
+	WebDir    string // kalau diisi, dipakai sebagai ganti yang di-embed
+	BaseURL   string
+	QRISImage string
+	// Enroll menentukan apakah panel baru boleh mendaftarkan dirinya sendiri.
+	// Dimatikan kalau portalnya dipakai untuk lebih dari satu penyewa.
+	Enroll       bool
 	QRISMerchant string
 	QRISNMID     string
 	WANumber     string
@@ -46,6 +49,7 @@ func NewServer(cfg Config, store *Store) *Server {
 
 	// --- panel Mikhmon ---
 	s.mux.HandleFunc("POST /api/v1/heartbeat", s.handleHeartbeat)
+	s.mux.HandleFunc("POST /api/v1/enroll", s.handleEnroll)
 
 	// --- halaman pelanggan ---
 	s.mux.HandleFunc("GET /api/v1/pay/{token}", s.handlePay)

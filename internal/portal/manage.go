@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -313,4 +314,53 @@ func (s *Store) DeleteInstance(id string) error {
 	}
 	_ = s.LogEvent("Pemasangan panel " + inst.Name + " dihapus.")
 	return nil
+}
+
+// EnrollInstance mendaftarkan pemasangan panel yang baru memasang dirinya.
+//
+// Dipakai supaya tidak ada berkas yang harus diisi tangan di sisi panel:
+// panelnya melapor sekali, portal membuatkan identitas untuknya, lalu identitas
+// itu disimpan panel sendiri. Dijalankan berulang aman - nama yang sama akan
+// mengembalikan instance yang sudah ada, bukan membuat yang kedua.
+func (s *Store) EnrollInstance(host, version string) (Instance, error) {
+	name := strings.TrimSpace(host)
+	if name == "" {
+		name = "Panel tanpa nama"
+	}
+	if len(name) > 120 {
+		name = name[:120]
+	}
+
+	// Sudah pernah mendaftar dengan nama yang sama?
+	var ada Instance
+	err := s.db.QueryRow(
+		`SELECT id, token, name, kind, router_name, version, last_seen
+		   FROM instances WHERE name = ? ORDER BY rowid LIMIT 1`, name,
+	).Scan(&ada.ID, &ada.Token, &ada.Name, &ada.Kind, &ada.RouterName, &ada.Version, &ada.LastSeen)
+	if err == nil {
+		if version != "" {
+			_, _ = s.db.Exec(`UPDATE instances SET version = ? WHERE id = ?`, version, ada.ID)
+			ada.Version = version
+		}
+		return ada, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Instance{}, err
+	}
+
+	inst := Instance{
+		ID:      strings.ToUpper(randHex(6)),
+		Token:   randHex(16),
+		Name:    name,
+		Kind:    "shared",
+		Version: strings.TrimSpace(version),
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO instances (id, token, name, kind, router_name, version, last_seen)
+		 VALUES (?, ?, ?, ?, '', ?, '')`,
+		inst.ID, inst.Token, inst.Name, inst.Kind, inst.Version); err != nil {
+		return Instance{}, err
+	}
+	_ = s.LogEvent("Panel " + inst.Name + " mendaftar sendiri.")
+	return inst, nil
 }

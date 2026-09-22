@@ -171,14 +171,36 @@ Build pertama lebih lama karena image Go naik ke 1.25.
 Buka `https://control.nocify.id/#/admin`, masuk, lalu **Panel terpasang →
 Tambah panel**. Salin isi `include/instance.php` yang ditampilkan.
 
-### 9. Pasang berkas instance di panel
+### 9. Panel mendaftar sendiri - tidak ada yang perlu diisi
+
+Panelnya mendaftarkan dirinya sendiri ke portal saat pertama kali melapor, lalu
+menyimpan id dan tokennya di `include/instance.php`. Tidak ada berkas yang
+perlu disunting di VPS pelanggan, dan tidak ada nilai yang ditanam di kode.
+
+Yang perlu ada cuma alamat portalnya, dan itu sudah diatur di
+`docker-compose.vps.yml`:
+
+```yaml
+MIKHMON_PORTAL_URL: "${PORTAL_BASE_URL:-https://control.nocify.id}"
+```
+
+Kalau berkas `include/instance.php` masih berisi contoh (`CONTOH000000` dan
+`portal.contoh.id`), isinya diabaikan dan panelnya mendaftar sendiri.
+
+Untuk memeriksa:
 
 ```bash
 cd /opt/mikhmon-new
-cp include/instance.example.php include/instance.php
-# tempel id, token, dan portal dari langkah 8
-chmod 600 include/instance.php
+docker exec mikhmon-php php -r '
+include "/var/www/include/subscription.php";
+mikhmon_heartbeat_refresh(true);
+$s = mikhmon_license_status();
+printf("terhubung: %s\nid: %s\nstatus: %s\n", $s["configured"] ? "ya" : "belum", $s["install_id"], $s["state"]);
+'
 ```
+
+Panel yang sudah mendaftar langsung muncul di halaman admin portal pada kartu
+**Panel terpasang**.
 
 ### 10. Daftarkan pelanggan yang sudah ada
 

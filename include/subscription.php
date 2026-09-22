@@ -143,6 +143,11 @@ function mikhmon_instance_data() {
     $data['id'] = '';
   }
 
+  /* Berkasnya masih berisi contoh -> anggap saja belum diatur, supaya panelnya
+   * mendaftar sendiri dan tidak menampilkan portal.contoh.id. */
+  if (mikhmon_instance_placeholder($data)) {
+    $data = array('id' => '', 'token' => '', 'portal' => '');
+  }
   $GLOBALS['mikhmon_instance_data'] = $data;
   return $data;
 }
@@ -151,6 +156,133 @@ function mikhmon_instance_data() {
 function mikhmon_instance_configured() {
   $data = mikhmon_instance_data();
   return ($data['id'] != '' && $data['token'] != '' && $data['portal'] != '');
+}
+
+/*
+ * Nilai dari include/instance.example.php dikenali lalu diabaikan.
+ *
+ * Tanpa ini, instalasi yang berkasnya masih berisi contoh akan dianggap sudah
+ * terhubung, dan halamannya menampilkan "ID Instalasi CONT-OH00-0000" beserta
+ * tombol yang mengarah ke portal.contoh.id - persis seperti belum diisi.
+ */
+function mikhmon_instance_placeholder($data) {
+  if ($data['id'] === 'CONTOH000000') {
+    return true;
+  }
+  if (strpos($data['token'], 'ganti-dengan-token') === 0) {
+    return true;
+  }
+  if (stripos($data['portal'], 'portal.contoh.id') !== false) {
+    return true;
+  }
+  return false;
+}
+
+/* Nama host panel ini, tanpa port. Dipakai untuk melapor ke portal. */
+function mikhmon_heartbeat_host() {
+  $host = isset($_SERVER['HTTP_HOST']) ? strtolower(trim($_SERVER['HTTP_HOST'])) : '';
+  $colon = strpos($host, ':');
+  if ($colon !== false) {
+    $host = substr($host, 0, $colon);
+  }
+  return $host;
+}
+
+/*
+ * Alamat portal langganan.
+ *
+ * Urutannya: dari lingkungan container (MIKHMON_PORTAL_URL di
+ * docker-compose.vps.yml - di situ paling gampang diganti), lalu dari
+ * konstanta, lalu ditebak dari nama host panelnya sendiri:
+ * taufiq.nocify.id -> control.nocify.id
+ *
+ * Jadi tidak ada nilai yang perlu diisi tangan di tiap VPS, dan tidak ada
+ * yang ditanam di kode selain pola nama host yang bisa ditimpa.
+ */
+function mikhmon_portal_url() {
+  $env = getenv('MIKHMON_PORTAL_URL');
+  if (is_string($env) && trim($env) !== '') {
+    return rtrim(trim($env), '/');
+  }
+  if (defined('MIKHMON_PORTAL_URL') && trim(MIKHMON_PORTAL_URL) !== '') {
+    return rtrim(trim(MIKHMON_PORTAL_URL), '/');
+  }
+
+  $label = defined('MIKHMON_PORTAL_LABEL') ? MIKHMON_PORTAL_LABEL : 'control';
+  $host = mikhmon_heartbeat_host();
+  if ($host !== '' && preg_match('/^[a-z0-9-]+\.([a-z0-9.-]+)$/', $host, $m) === 1) {
+    return 'https://' . $label . '.' . $m[1];
+  }
+  return '';
+}
+
+/* Simpan kredensial hasil pendaftaran sendiri ke include/instance.php. */
+function mikhmon_instance_save($data) {
+  $path = mikhmon_instance_path();
+  $isi = "<?php\n"
+       . "/*\n"
+       . " * Kredensial instalasi ini di portal langganan. Diisi otomatis oleh\n"
+       . " * panelnya sendiri saat pertama kali melapor - tidak perlu disunting.\n"
+       . " * Jangan di-commit; kalau tokennya bocor, orang lain bisa memakai\n"
+       . " * langganan instalasi ini.\n"
+       . " */\n\n"
+       . "\$mikhmon_instance = array(\n"
+       . "  'id'     => '" . addcslashes($data['id'], "'\\") . "',\n"
+       . "  'token'  => '" . addcslashes($data['token'], "'\\") . "',\n"
+       . "  'portal' => '" . addcslashes($data['portal'], "'\\") . "',\n"
+       . ");\n";
+
+  $tmp = $path . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
+  if (@file_put_contents($tmp, $isi) !== false) {
+    if (@rename($tmp, $path)) {
+      @chmod($path, 0600);
+      return true;
+    }
+    @unlink($tmp);
+  }
+  if (@file_put_contents($path, $isi) !== false) {
+    @chmod($path, 0600);
+    return true;
+  }
+  return false;
+}
+
+/*
+ * Daftarkan instalasi ini ke portal, sekali saja.
+ *
+ * Dipanggil kalau belum ada kredensial sama sekali, jadi pemasangan panel baru
+ * langsung punya identitas tanpa ada berkas yang harus diisi tangan.
+ */
+function mikhmon_instance_enroll() {
+  $data = mikhmon_instance_data();
+  if ($data['id'] !== '' && $data['token'] !== '') {
+    return $data;
+  }
+
+  $portal = mikhmon_portal_url();
+  if ($portal === '') {
+    return $data;
+  }
+
+  $balasan = mikhmon_heartbeat_http_post(
+    $portal . '/api/v1/enroll',
+    array('host' => mikhmon_heartbeat_host(), 'version' => mikhmon_heartbeat_version()),
+    10
+  );
+  if (!is_array($balasan)
+      || empty($balasan['instance']['id'])
+      || empty($balasan['instance']['token'])) {
+    return $data;
+  }
+
+  $baru = array(
+    'id'     => (string) $balasan['instance']['id'],
+    'token'  => (string) $balasan['instance']['token'],
+    'portal' => $portal,
+  );
+  mikhmon_instance_save($baru);
+  $GLOBALS['mikhmon_instance_data'] = $baru;
+  return $baru;
 }
 
 /** Versi panel yang dikirim ke portal, misalnya "3.20". */
@@ -260,7 +392,7 @@ function mikhmon_heartbeat_http_post($url, $payload, $timeout_sec) {
     }
     $code = (int) @curl_getinfo($ch, CURLINFO_HTTP_CODE);
     @curl_close($ch);
-    if ($code != 200) {
+    if ($code < 200 || $code >= 300) {
       return null;
     }
 
@@ -287,7 +419,9 @@ function mikhmon_heartbeat_http_post($url, $payload, $timeout_sec) {
   if (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
     $code = (int) $m[1];
   }
-  if ($code != 200) {
+  /* Terima semua balasan 2xx: heartbeat menjawab 200, sedangkan pendaftaran
+   * panel menjawab 201. */
+  if ($code < 200 || $code >= 300) {
     return null;
   }
 
@@ -315,6 +449,12 @@ function mikhmon_heartbeat_refresh($force = false) {
     return $cache;
   }
 
+  if (!mikhmon_instance_configured()) {
+    /* Belum ada kredensial sama sekali: daftarkan instalasi ini ke portal,
+     * sekali saja. Hasilnya disimpan panel sendiri, jadi tidak ada berkas
+     * yang perlu diisi tangan di VPS ini. */
+    mikhmon_instance_enroll();
+  }
   if (!mikhmon_instance_configured()) {
     return $cache;
   }

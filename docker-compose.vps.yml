@@ -17,6 +17,9 @@ services:
       - ./:/var/www
     environment:
       MIKHMON_API_URL: "http://mikhmon-api:8088"
+      # Alamat portal langganan. Panel membacanya dari sini lalu mendaftarkan
+      # dirinya sendiri - tidak ada berkas yang perlu diisi tangan di VPS ini.
+      MIKHMON_PORTAL_URL: "${PORTAL_BASE_URL:-https://control.nocify.id}"
     depends_on:
       - mikhmon-api
     networks:
