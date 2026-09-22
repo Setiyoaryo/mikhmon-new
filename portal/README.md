@@ -145,6 +145,21 @@ POST /admin/claims/{id}/approve        → memperpanjang langganan
 POST /admin/claims/{id}/reject
 POST /admin/customers/{id}/suspend     → panel jadi expired
 POST /admin/customers/{id}/activate
+
+GET  /admin/plans      → daftar paket yang dijual
+GET  /admin/instances  → daftar pemasangan panel
+POST /admin/instances  → buat pemasangan baru; token-nya ditampilkan sekali
+POST /admin/customers  → tambah pelanggan
+                         {name, institution, wa, session_name, instance_id, plan_code}
+                         → {customer} beserta pay_url
+PATCH  /admin/customers/{id}        → ubah nama, usaha, wa, subdomain, panel
+POST   /admin/customers/{id}/extend → {months} → {expires_at}
+DELETE /admin/customers/{id}
+
+`session_name` harus sama dengan nama sesi router di panel, karena subdomain
+itulah yang menentukan sesi mana yang dipakai (`include/tenant.php`). Masukan
+yang ditolak dibalas `400 {"error":"invalid","message":"..."}` dengan kalimat
+siap tampil, jadi antarmuka tinggal menampilkan `message`-nya.
 ```
 
 Perpanjangan ditambahkan dari tanggal berakhir yang masih tersisa, bukan dari
@@ -163,13 +178,13 @@ dan bisa ditambah kolom referensi eksternal tanpa mengubah yang lain.
 
 ## Yang belum
 
-- Klien heartbeat di panel Mikhmon: halaman Langganan read-only yang memanggil
-  `/api/v1/heartbeat` dan menyimpan jawabannya untuk pemakaian offline
-- Subdomain per pelanggan (`<nama>.nocify.id`) di Traefik, plus pemetaan
-  subdomain ke sesi router
 - Unggah gambar QRIS dari halaman admin (sekarang ditaruh manual sebagai
   `data/portal/qris.png`)
-- Menghapus `tools/mikhmon-keygen.php` dan lisensi HMAC yang lama
+- Rate limit per Host di Traefik dan kuota konkurensi per tenant di
+  `mikhmon-api`, supaya satu pelanggan tidak membanjiri yang lain
+- Antarmuka untuk mengubah paket dan harganya (sekarang masih dari seeder)
+- Pemindahan instalasi lama ke sesi per pelanggan di VPS produksi:
+  `tools/mikhmon-migrate-sessions.php` lalu `tools/mikhmon-rekey.php`
 
 ## Batasan yang tetap ada
 

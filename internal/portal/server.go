@@ -61,6 +61,15 @@ func NewServer(cfg Config, store *Store) *Server {
 	s.mux.HandleFunc("POST /api/v1/admin/customers/{id}/suspend", s.admin(s.handleSuspend))
 	s.mux.HandleFunc("POST /api/v1/admin/customers/{id}/activate", s.admin(s.handleActivate))
 
+	// --- admin: kelola pelanggan ---
+	s.mux.HandleFunc("GET /api/v1/admin/plans", s.admin(s.handlePlans))
+	s.mux.HandleFunc("GET /api/v1/admin/instances", s.admin(s.handleInstances))
+	s.mux.HandleFunc("POST /api/v1/admin/instances", s.admin(s.handleCreateInstance))
+	s.mux.HandleFunc("POST /api/v1/admin/customers", s.admin(s.handleCreateCustomer))
+	s.mux.HandleFunc("PATCH /api/v1/admin/customers/{id}", s.admin(s.handleUpdateCustomer))
+	s.mux.HandleFunc("POST /api/v1/admin/customers/{id}/extend", s.admin(s.handleExtend))
+	s.mux.HandleFunc("DELETE /api/v1/admin/customers/{id}", s.admin(s.handleDeleteCustomer))
+
 	// --- lain-lain ---
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -513,19 +522,8 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	outCustomers := make([]adminCustomer, 0, len(customers))
 	active, warning, expired := 0, 0, 0
 	for _, c := range customers {
-		sub := s.subscription(c)
-		inst, _ := s.store.InstanceByID(c.InstanceID)
-		row := adminCustomer{
-			ID: c.ID, Name: c.Name, Institution: c.Institution,
-			InstanceID: c.InstanceID, SessionName: c.SessionName,
-			PlanCode: sub.PlanCode, PlanLabel: sub.PlanLabel, DaysLeft: sub.DaysLeft,
-			PayURL: strings.TrimRight(s.cfg.BaseURL, "/") + "/#/pay/" + c.PayToken,
-			Status: sub.State, WA: c.WA, LastSeen: humanAgo(inst.LastSeen),
-		}
-		if p, err := s.store.PlanByCode(sub.PlanCode); err == nil && p.Months > 0 {
-			row.Monthly = p.Price / int64(p.Months)
-		}
-		switch sub.State {
+		row := s.adminCustomerRow(c)
+		switch row.Status {
 		case "active":
 			active++
 		case "warning", "grace":
