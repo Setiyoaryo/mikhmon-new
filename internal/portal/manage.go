@@ -364,3 +364,214 @@ func (s *Store) EnrollInstance(host, version string) (Instance, error) {
 	_ = s.LogEvent("Panel " + inst.Name + " mendaftar sendiri.")
 	return inst, nil
 }
+
+/* ------------------------------------------------------------------ paket */
+
+/*
+ * Paket sewa (plans) dulu hanya diisi nilai awal waktu basis data dibuat,
+ * sehingga harga tidak bisa diubah tanpa menyentuh kode. Fungsi di bawah ini
+ * yang membuat harga bisa diubah dari halaman admin.
+ *
+ * Kode paket sengaja tidak bisa diganti setelah dibuat: kode itu dirujuk oleh
+ * Kode paket sengaja tidak bisa diganti setelah dibuat: kode itu dirujuk oleh
+ * riwayat pembayaran (payments.plan_code), jadi menggantinya akan membuat
+ * pembayaran yang sudah tercatat menunjuk paket yang salah.
+ * menggantinya akan membuat riwayat pembayaran menunjuk paket yang salah.
+ */
+
+// ErrInUse menandai data yang masih dipakai data lain, mis. paket yang masih
+// dipakai pelanggan. Penangan HTTP menerjemahkannya jadi 409 supaya antarmuka
+// bisa membedakannya dari masukan yang salah (400).
+type ErrInUse struct{ Msg string }
+
+func (e ErrInUse) Error() string { return e.Msg }
+
+// PlanInput adalah paket yang dikirim dari halaman admin.
+type PlanInput struct {
+	Code   string
+	Label  string
+	Months int
+	Price  int64
+	Note   string
+}
+
+/*
+ * NormalizePlanCode memaksa kode paket jadi huruf besar yang aman dipakai
+ * sebagai kunci basis data dan sebagai parameter di halaman pembayaran.
+ */
+func NormalizePlanCode(v string) string {
+	v = strings.ToUpper(strings.TrimSpace(v))
+	var b strings.Builder
+	for _, r := range v {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '-' || r == '_' || r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 16 {
+		out = strings.Trim(out[:16], "-")
+	}
+	return out
+}
+
+// maxPlanPrice menjaga salah ketik (mis. 1000000000000) tidak lolos.
+const maxPlanPrice = 1000000000
+
+// validatePlan menaruh semua aturan paket di satu tempat supaya pembuatan dan
+// pengubahan memakai aturan yang sama.
+func validatePlan(in PlanInput) (PlanInput, error) {
+	in.Code = NormalizePlanCode(in.Code)
+	in.Label = strings.TrimSpace(in.Label)
+	in.Note = strings.TrimSpace(in.Note)
+
+	if in.Code == "" {
+		return in, invalid("Kode paket belum diisi atau isinya tidak sah.")
+	}
+	if in.Label == "" {
+		return in, invalid("Nama paket belum diisi.")
+	}
+	if len([]rune(in.Label)) > 40 {
+		return in, invalid("Nama paket terlalu panjang, maksimal 40 huruf.")
+	}
+	if len([]rune(in.Note)) > 40 {
+		return in, invalid("Catatan terlalu panjang, maksimal 40 huruf.")
+	}
+	if in.Months < 1 || in.Months > 36 {
+		return in, invalid("Durasi harus antara 1 dan 36 bulan.")
+	}
+	if in.Price < 1 {
+		return in, invalid("Harga harus lebih dari 0.")
+	}
+	if in.Price > maxPlanPrice {
+		return in, invalid("Harga terlalu besar, maksimal Rp 1.000.000.000.")
+	}
+	return in, nil
+}
+
+// PlanUsage menghitung berapa pelanggan yang memakai tiap paket.
+func (s *Store) PlanUsage() (map[string]int, error) {
+	// Pelanggan tidak menyimpan kode paket di tabelnya sendiri: paket yang
+	// berlaku adalah paket dari pembayaran terakhir yang disetujui, sama
+	// seperti yang dipakai halaman admin dan halaman pembayaran.
+	rows, err := s.db.Query(`
+		SELECT COALESCE((
+		         SELECT p.plan_code FROM payments p
+		          WHERE p.customer_id = c.id AND p.status = 'approved'
+		          ORDER BY p.decided_at DESC LIMIT 1), '') AS kode,
+		       COUNT(*)
+		  FROM customers c
+		 GROUP BY kode`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var code string
+		var n int
+		if err := rows.Scan(&code, &n); err != nil {
+			return nil, err
+		}
+		out[code] = n
+	}
+	return out, rows.Err()
+}
+
+// SavePlan membuat paket baru.
+func (s *Store) SavePlan(in PlanInput) (Plan, error) {
+	in, err := validatePlan(in)
+	if err != nil {
+		return Plan{}, err
+	}
+	if _, err := s.PlanByCode(in.Code); err == nil {
+		return Plan{}, invalid("Kode paket %s sudah dipakai paket lain.", in.Code)
+	} else if !errors.Is(err, ErrNotFound) {
+		return Plan{}, err
+	}
+
+	// Paket baru ditaruh paling bawah supaya urutan paket yang sudah ada tidak
+	// berubah di halaman pembayaran pelanggan.
+	var sort int
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(sort), -1) + 1 FROM plans`).Scan(&sort); err != nil {
+		return Plan{}, err
+	}
+	if _, err := s.db.Exec(
+		`INSERT INTO plans (code, label, months, price, note, sort, sale)
+		 VALUES (?, ?, ?, ?, ?, ?, 1)`,
+		in.Code, in.Label, in.Months, in.Price, in.Note, sort); err != nil {
+		return Plan{}, err
+	}
+	_ = s.LogEvent(fmt.Sprintf("Paket %s dibuat dengan harga %d.", in.Code, in.Price))
+	return s.PlanByCode(in.Code)
+}
+
+// UpdatePlan mengubah paket yang sudah ada. Kode paket tidak ikut diubah.
+func (s *Store) UpdatePlan(code string, in PlanInput) (Plan, error) {
+	code = NormalizePlanCode(code)
+	old, err := s.PlanByCode(code)
+	if err != nil {
+		return Plan{}, err
+	}
+
+	in.Code = code
+	in, err = validatePlan(in)
+	if err != nil {
+		return Plan{}, err
+	}
+	if _, err := s.db.Exec(
+		`UPDATE plans SET label = ?, months = ?, price = ?, note = ? WHERE code = ?`,
+		in.Label, in.Months, in.Price, in.Note, code); err != nil {
+		return Plan{}, err
+	}
+
+	if old.Price != in.Price {
+		_ = s.LogEvent(fmt.Sprintf("Harga paket %s diubah dari %d ke %d.", code, old.Price, in.Price))
+	} else {
+		_ = s.LogEvent(fmt.Sprintf("Paket %s diubah.", code))
+	}
+	return s.PlanByCode(code)
+}
+
+/*
+ * DeletePlan menghapus paket. Ditolak kalau masih ada pelanggan yang memakainya,
+ * karena pelanggan tanpa paket tidak bisa memperpanjang sendiri dari halaman
+ * pembayaran - lebih baik admin memindahkan pelanggannya dulu.
+ */
+func (s *Store) DeletePlan(code string) error {
+	code = NormalizePlanCode(code)
+	plan, err := s.PlanByCode(code)
+	if err != nil {
+		return err
+	}
+
+	usage, err := s.PlanUsage()
+	if err != nil {
+		return err
+	}
+	if n := usage[code]; n > 0 {
+		return ErrInUse{Msg: fmt.Sprintf(
+			"Paket %s masih dipakai %d pelanggan. Pindahkan dulu pelanggannya ke paket lain.", plan.Label, n)}
+	}
+
+	// Pembayaran yang belum diputus juga menahan penghapusan: waktu disetujui,
+	// paketnya harus masih ada supaya masa berlakunya bisa dihitung.
+	var menunggu int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM payments WHERE plan_code = ? AND status = 'pending'`, code).Scan(&menunggu); err != nil {
+		return err
+	}
+	if menunggu > 0 {
+		return ErrInUse{Msg: fmt.Sprintf(
+			"Paket %s masih menunggu %d pembayaran yang belum diputus. Putuskan dulu pembayarannya.",
+			plan.Label, menunggu)}
+	}
+	if _, err := s.db.Exec(`DELETE FROM plans WHERE code = ?`, code); err != nil {
+		return err
+	}
+	_ = s.LogEvent(fmt.Sprintf("Paket %s dihapus.", code))
+	return nil
+}

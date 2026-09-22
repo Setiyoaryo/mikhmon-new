@@ -67,6 +67,11 @@ func NewServer(cfg Config, store *Store) *Server {
 
 	// --- admin: kelola pelanggan ---
 	s.mux.HandleFunc("GET /api/v1/admin/plans", s.admin(s.handlePlans))
+	// Paket & harga: dulu hanya nilai awal di basis data, sekarang bisa diubah
+	// dari halaman admin tanpa menyentuh kode.
+	s.mux.HandleFunc("POST /api/v1/admin/plans", s.admin(s.handleCreatePlan))
+	s.mux.HandleFunc("PATCH /api/v1/admin/plans/{code}", s.admin(s.handleUpdatePlan))
+	s.mux.HandleFunc("DELETE /api/v1/admin/plans/{code}", s.admin(s.handleDeletePlan))
 	s.mux.HandleFunc("GET /api/v1/admin/instances", s.admin(s.handleInstances))
 	s.mux.HandleFunc("POST /api/v1/admin/instances", s.admin(s.handleCreateInstance))
 	s.mux.HandleFunc("DELETE /api/v1/admin/instances/{id}", s.admin(s.handleDeleteInstance))

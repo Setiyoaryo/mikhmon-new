@@ -58,16 +58,130 @@ func writeInvalid(w http.ResponseWriter, err error) {
 
 /* ------------------------------------------------------------------ paket */
 
+// planJSON menyiapkan satu paket untuk jawaban API. Jumlah pelanggan
+// pemakainya ikut dikirim supaya halaman admin bisa memperingatkan sebelum
+// paket dihapus, bukan sesudah ditolak server.
+func planJSON(p Plan, customers int) map[string]any {
+	return map[string]any{
+		"code":      p.Code,
+		"label":     p.Label,
+		"months":    p.Months,
+		"price":     p.Price,
+		"note":      p.Note,
+		"customers": customers,
+	}
+}
+
+/*
+ * handlePlans mengembalikan paket yang dijual beserta harga terkininya.
+ * Harga diambil dari basis data setiap kali dipanggil - tidak ada nilai harga
+ * yang ditanam di kode - sehingga perubahan harga langsung terlihat di halaman
+ * pembayaran pelanggan.
+ */
 func (s *Server) handlePlans(w http.ResponseWriter, r *http.Request) {
-	plans, err := s.store.Plans(true)
+	plans, err := s.store.Plans(false)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "store_error")
 		return
 	}
-	if plans == nil {
-		plans = []Plan{}
+	usage, err := s.store.PlanUsage()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "store_error")
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plans": plans})
+
+	out := make([]map[string]any, 0, len(plans))
+	for _, p := range plans {
+		out = append(out, planJSON(p, usage[p.Code]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plans": out})
+}
+
+// writePlanErr menerjemahkan galat paket jadi kode balasan yang tepat.
+func writePlanErr(w http.ResponseWriter, err error) {
+	var inUse ErrInUse
+	if errors.As(err, &inUse) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error":   "in_use",
+			"message": inUse.Msg,
+		})
+		return
+	}
+	if errors.Is(err, ErrNotFound) {
+		writeErr(w, http.StatusNotFound, "unknown_plan")
+		return
+	}
+	writeInvalid(w, err)
+}
+
+// pesanPaketTidakTerbaca dipakai saat isi permintaan bukan JSON yang sesuai,
+// supaya admin melihat sebabnya alih-alih kode "bad_request" mentah.
+var errPaketTidakTerbaca = invalid("Data paket tidak terbaca. " +
+	"Pastikan harga dan durasi diisi berupa angka.")
+
+func (s *Server) handleCreatePlan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code   string `json:"code"`
+		Label  string `json:"label"`
+		Months int    `json:"months"`
+		Price  int64  `json:"price"`
+		Note   string `json:"note"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeInvalid(w, errPaketTidakTerbaca)
+		return
+	}
+
+	plan, err := s.store.SavePlan(PlanInput{
+		Code: req.Code, Label: req.Label, Months: req.Months, Price: req.Price, Note: req.Note,
+	})
+	if err != nil {
+		writePlanErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "plan": planJSON(plan, 0)})
+}
+
+// handleUpdatePlan mengubah paket yang sudah ada. Kode paket ada di alamat,
+// bukan di badan permintaan, karena kode itu tidak bisa diganti.
+func (s *Server) handleUpdatePlan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Label  string `json:"label"`
+		Months int    `json:"months"`
+		Price  int64  `json:"price"`
+		Note   string `json:"note"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeInvalid(w, errPaketTidakTerbaca)
+		return
+	}
+
+	code := r.PathValue("code")
+	plan, err := s.store.UpdatePlan(code, PlanInput{
+		Label: req.Label, Months: req.Months, Price: req.Price, Note: req.Note,
+	})
+	if err != nil {
+		writePlanErr(w, err)
+		return
+	}
+
+	usage, err := s.store.PlanUsage()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "store_error")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":   true,
+		"plan": planJSON(plan, usage[plan.Code]),
+	})
+}
+
+func (s *Server) handleDeletePlan(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeletePlan(r.PathValue("code")); err != nil {
+		writePlanErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 /* ------------------------------------------------------------- pemasangan */
