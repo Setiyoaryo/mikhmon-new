@@ -49,7 +49,15 @@ async function req(method, path, body) {
 
   if (!res.ok) {
     const code = data && typeof data.error === 'string' ? data.error : ''
-    const err = fail(code || `Permintaan gagal (HTTP ${res.status}).`, res.status, code)
+    /*
+     * Server mengirim kalimat siap tampil di field "message" (mis. subdomain
+     * bentrok). Pesannya ditaruh di err.message supaya pemanggil bisa
+     * menampilkannya apa adanya, dan ditandai lewat serverMessage supaya
+     * pesanGagal() tidak menampilkan kode galat mentah seperti "invalid".
+     */
+    const pesan = data && typeof data.message === 'string' ? data.message.trim() : ''
+    const err = fail(pesan || code || `Permintaan gagal (HTTP ${res.status}).`, res.status, code)
+    if (pesan) err.serverMessage = pesan
     /* 409 "already_pending" menyertakan klaim yang sudah ada. */
     if (data && data.claim) err.claim = data.claim
     throw err
@@ -97,4 +105,37 @@ export function adminClaim(id, action) {
 /** action: "suspend" | "activate" */
 export function adminCustomer(id, action) {
   return req('POST', `/admin/customers/${enc(id)}/${action}`)
+}
+
+/* ------------------------------------------------- kelola pelanggan ----- */
+
+export function adminPlans() {
+  return req('GET', '/admin/plans')
+}
+
+export function adminInstances() {
+  return req('GET', '/admin/instances')
+}
+
+/** body: {name, kind} — kind: "shared" | "dedicated" */
+export function adminCreateInstance(body) {
+  return req('POST', '/admin/instances', body)
+}
+
+/** body: {name, institution, wa, session_name, instance_id, plan_code} */
+export function adminCreateCustomer(body) {
+  return req('POST', '/admin/customers', body)
+}
+
+/** body: {name, institution, wa, session_name, instance_id} */
+export function adminUpdateCustomer(id, body) {
+  return req('PATCH', `/admin/customers/${enc(id)}`, body)
+}
+
+export function adminExtend(id, months) {
+  return req('POST', `/admin/customers/${enc(id)}/extend`, { months })
+}
+
+export function adminDeleteCustomer(id) {
+  return req('DELETE', `/admin/customers/${enc(id)}`)
 }

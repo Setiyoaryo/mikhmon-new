@@ -1,7 +1,20 @@
 <script>
   import Login from './Login.svelte'
-  import { adminOverview, adminMe, adminLogout, adminClaim, adminCustomer } from '../api.js'
-  import { fmtRupiah, fmtDate, prettyId, pesanGagal } from '../format.js'
+  import FormPelanggan from '../admin/FormPelanggan.svelte'
+  import PanelDeploy from '../admin/PanelDeploy.svelte'
+  import { salinTeks } from '../clipboard.js'
+  import {
+    adminOverview,
+    adminMe,
+    adminLogout,
+    adminClaim,
+    adminCustomer,
+    adminPlans,
+    adminInstances,
+    adminExtend,
+    adminDeleteCustomer
+  } from '../api.js'
+  import { fmtRupiah, fmtDate, prettyId, pesanGagal, stateLabel } from '../format.js'
 
   let authed = $state(null) // null = belum diketahui, true/false = hasil pemeriksaan
   let user = $state('admin')
@@ -12,8 +25,20 @@
   let flash = $state('')
   let q = $state('')
 
+  /* Data pendukung pengelolaan pelanggan. */
+  let plans = $state([])
+  let instances = $state([])
+  let instError = $state('')
+  let form = $state(null) // {mode: 'baru'|'edit', row, key}
+  let formSeq = 0
+  let formPanel = $state(false) // form "Tambah panel" di bagian bawah
+  let extendFor = $state('') // id pelanggan yang pemilih perpanjangannya terbuka
+  let copied = $state('') // id pelanggan yang tautannya baru disalin
+  let copyTimer = 0
+
   let stats = $derived(data ? data.stats : { revenue_month: 0, customers: 0, active: 0, warning: 0, expired: 0 })
   let claims = $derived(data ? data.claims : [])
+  let total = $derived(data ? data.customers.length : 0)
 
   /* Pencarian tetap di sisi klien, atas data pelanggan yang sudah diambil. */
   let filtered = $derived(
@@ -39,6 +64,7 @@
       data = await adminOverview()
       authed = true
       flash = ''
+      await muatReferensi()
       try {
         const me = await adminMe()
         if (me && me.user) user = me.user
@@ -59,9 +85,26 @@
       data = await adminOverview()
       authed = true
       error = ''
+      await muatReferensi()
     } catch (e) {
       if (e.status === 401) authed = false
       else error = pesanGagal(e, 'Gagal memuat ulang data admin.')
+    }
+  }
+
+  /* Daftar panel dan paket dipakai form pelanggan; gagalnya tidak mematikan halaman. */
+  async function muatReferensi() {
+    try {
+      const [p, i] = await Promise.all([adminPlans(), adminInstances()])
+      plans = p.plans || []
+      instances = i.instances || []
+      instError = ''
+    } catch (e) {
+      if (e.status === 401) {
+        authed = false
+        return
+      }
+      instError = pesanGagal(e, 'Gagal memuat daftar panel dan paket.')
     }
   }
 
@@ -72,6 +115,10 @@
     }
     flash = ''
     error = pesanGagal(e, 'Aksi gagal dijalankan. Coba lagi.')
+  }
+
+  function sesiHabis() {
+    authed = false
   }
 
   async function approve(c) {
@@ -120,6 +167,94 @@
     }
   }
 
+  /* ------------------------------------------------------ kelola pelanggan -- */
+
+  function tambah() {
+    extendFor = ''
+    form = { mode: 'baru', row: null, key: ++formSeq }
+  }
+
+  function edit(r) {
+    extendFor = ''
+    form = { mode: 'edit', row: r, key: ++formSeq }
+  }
+
+  function tutupForm() {
+    form = null
+  }
+
+  async function simpanPelanggan(c, mode) {
+    error = ''
+    flash =
+      mode === 'baru'
+        ? `Pelanggan ${c.institution} dibuat. Sesi panelnya bernama ${c.session_name}.`
+        : `Data ${c.institution} diperbarui. Sesi di panel harus bernama ${c.session_name}.`
+    await refresh()
+  }
+
+  async function perpanjang(r, bulan) {
+    busyId = r.id
+    try {
+      const res = await adminExtend(r.id, bulan)
+      extendFor = ''
+      flash = `Langganan ${r.institution} diperpanjang ${bulan} bulan, sampai ${fmtDate(res.expires_at)}.`
+      await refresh()
+    } catch (e) {
+      gagal(e)
+    } finally {
+      busyId = ''
+    }
+  }
+
+  async function hapus(r) {
+    const lanjut = confirm(
+      `Hapus pelanggan ${r.institution} (sesi ${r.session_name})? Tautan pembayarannya ikut hilang dan tidak bisa dikembalikan.`
+    )
+    if (!lanjut) return
+
+    busyId = r.id
+    try {
+      await adminDeleteCustomer(r.id)
+      if (form && form.row && form.row.id === r.id) form = null
+      flash = `Pelanggan ${r.institution} dihapus.`
+      await refresh()
+    } catch (e) {
+      gagal(e)
+    } finally {
+      busyId = ''
+    }
+  }
+
+  async function salinTautan(r) {
+    const ok = await salinTeks(r.pay_url)
+    if (!ok) {
+      flash = ''
+      error = `Tautan tidak bisa disalin otomatis. Salin manual: ${r.pay_url}`
+      return
+    }
+    error = ''
+    copied = r.id
+    flash = `Tautan pembayaran ${r.institution} disalin.`
+    clearTimeout(copyTimer)
+    copyTimer = setTimeout(() => (copied = ''), 2000)
+  }
+
+  /* Dari form pelanggan yang belum punya panel: buka form panel di bawah. */
+  function kePanel() {
+    formPanel = true
+    const el = document.getElementById('panel-terpasang')
+    if (!el) return
+    const kurangi = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    el.scrollIntoView({ behavior: kurangi ? 'auto' : 'smooth', block: 'start' })
+  }
+
+  async function panelBaru(inst) {
+    instances = instances.concat([inst])
+    error = ''
+    flash = `${inst.name} direkam. Salin berkas include/instance.php ke VPS panel.`
+    formPanel = false
+  }
+
   async function logout() {
     try {
       await adminLogout()
@@ -130,6 +265,8 @@
     flash = ''
     error = ''
     q = ''
+    form = null
+    extendFor = ''
     authed = false
   }
 
@@ -275,7 +412,7 @@
 
     <!-- -------------------------------------------------------- pelanggan -- -->
     <div class="card mt-3">
-      <div class="card-head">
+      <div class="card-head bungkus">
         <i class="fa fa-users"></i>
         <h3>Pelanggan</h3>
         <div class="grow"></div>
@@ -283,49 +420,170 @@
           <i class="fa fa-search"></i>
           <input class="input" placeholder="Cari nama / ID instalasi" bind:value={q} />
         </div>
+        <button class="btn btn-primary btn-sm" onclick={tambah} disabled={form && form.mode === 'baru'}>
+          <i class="fa fa-plus"></i> Tambah pelanggan
+        </button>
       </div>
 
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Pelanggan</th>
-            <th>ID Instalasi</th>
-            <th>Paket</th>
-            <th>Sisa</th>
-            <th>Heartbeat</th>
-            <th>Status</th>
-            <th class="right">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each filtered as r (r.id)}
-            <tr>
-              <td>
-                <div class="name">{r.institution}</div>
-                <div class="tiny muted">{r.name}</div>
-              </td>
-              <td class="mono tiny">{prettyId(r.instance_id)}</td>
-              <td>{r.plan_label}</td>
-              <td class="nowrap">{sisa(r.days_left)}</td>
-              <td class="muted small nowrap">{r.last_seen}</td>
-              <td><span class="badge {r.status}">{r.status === 'active' ? 'Aktif' : r.status === 'warning' ? 'Segera berakhir' : 'Berakhir'}</span></td>
-              <td class="right nowrap">
-                <button class="btn btn-ghost btn-sm" onclick={() => toggle(r)} disabled={busyId === r.id}>
-                  {#if r.status === 'expired'}
-                    <i class="fa fa-play"></i> Aktifkan
-                  {:else}
-                    <i class="fa fa-pause"></i> Tangguhkan
-                  {/if}
-                </button>
-              </td>
-            </tr>
-          {/each}
-          {#if filtered.length === 0}
-            <tr><td colspan="7" class="center muted">Tidak ada yang cocok.</td></tr>
-          {/if}
-        </tbody>
-      </table>
+      {#if form}
+        {#key form.key}
+          <FormPelanggan
+            instances={instances}
+            plans={plans}
+            instError={instError}
+            awal={form.row}
+            onsimpan={simpanPelanggan}
+            ontutup={tutupForm}
+            on401={sesiHabis}
+            onbuatpanel={kePanel}
+            onmuatulang={muatReferensi}
+          />
+        {/key}
+      {/if}
+
+      {#if total === 0}
+        <div class="card-body">
+          <div class="box info">
+            <i class="fa fa-users"></i>
+            Belum ada pelanggan yang terdaftar. Tambah pelanggan pertama untuk membuat sesi
+            panelnya beserta tautan pembayaran.
+          </div>
+          <button class="btn btn-primary mt-2" onclick={tambah}>
+            <i class="fa fa-plus"></i> Tambah pelanggan
+          </button>
+        </div>
+      {:else}
+        <div class="tablewrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Pelanggan</th>
+                <th>ID Instalasi</th>
+                <th>Paket</th>
+                <th>Sisa</th>
+                <th>Heartbeat</th>
+                <th>Status</th>
+                <th class="right">Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each filtered as r, i (r.id)}
+                <tr class="baris-masuk" style="animation-delay:{(i > 8 ? 8 : i) * 28}ms">
+                  <td>
+                    <div class="name">{r.institution}</div>
+                    <div class="tiny muted">{r.name}</div>
+                  </td>
+                  <td>
+                    <div class="mono tiny">{prettyId(r.instance_id)}</div>
+                    <div class="tiny muted">sesi <span class="mono">{r.session_name}</span></div>
+                  </td>
+                  <td>
+                    {r.plan_label}
+                    {#if r.monthly}
+                      <div class="tiny muted">{fmtRupiah(r.monthly)}/bln</div>
+                    {/if}
+                  </td>
+                  <td class="nowrap">{sisa(r.days_left)}</td>
+                  <td class="muted small nowrap">{r.last_seen}</td>
+                  <td><span class="badge {r.status}">{stateLabel[r.status] ?? r.status}</span></td>
+                  <td class="right nowrap">
+                    <div class="aksi">
+                      <button
+                        class="btn btn-ghost btn-sm"
+                        title="Salin tautan pembayaran"
+                        aria-label="Salin tautan pembayaran {r.institution}"
+                        onclick={() => salinTautan(r)}
+                      >
+                        <i class="fa {copied === r.id ? 'fa-check' : 'fa-copy'}"></i>
+                        {#if copied === r.id}<span class="tiny">tersalin</span>{/if}
+                      </button>
+                      <button
+                        class="btn btn-ghost btn-sm"
+                        title="Ubah data pelanggan"
+                        aria-label="Ubah data {r.institution}"
+                        onclick={() => edit(r)}
+                      >
+                        <i class="fa fa-pencil"></i>
+                      </button>
+                      <button
+                        class="btn btn-ghost btn-sm"
+                        title="Perpanjang langganan"
+                        aria-label="Perpanjang langganan {r.institution}"
+                        aria-expanded={extendFor === r.id}
+                        onclick={() => (extendFor = extendFor === r.id ? '' : r.id)}
+                      >
+                        <i class="fa fa-clock-o"></i>
+                      </button>
+                      <button
+                        class="btn btn-ghost btn-sm"
+                        title="Hapus pelanggan"
+                        aria-label="Hapus pelanggan {r.institution}"
+                        onclick={() => hapus(r)}
+                        disabled={busyId === r.id}
+                      >
+                        <i class="fa fa-trash"></i>
+                      </button>
+                      <button class="btn btn-ghost btn-sm" onclick={() => toggle(r)} disabled={busyId === r.id}>
+                        {#if r.status === 'expired'}
+                          <i class="fa fa-play"></i> Aktifkan
+                        {:else}
+                          <i class="fa fa-pause"></i> Tangguhkan
+                        {/if}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {#if extendFor === r.id}
+                  <tr class="subrow">
+                    <td colspan="7">
+                      <div class="row wrap">
+                        <span class="small nowrap">Perpanjang <b>{r.institution}</b>:</span>
+                        {#each [1, 3, 6, 12] as bulan}
+                          <button
+                            class="btn btn-ghost btn-sm"
+                            onclick={() => perpanjang(r, bulan)}
+                            disabled={busyId === r.id}
+                          >
+                            {bulan} bulan
+                          </button>
+                        {/each}
+                        {#if busyId === r.id}
+                          <span class="small muted"><i class="fa fa-spinner"></i> Menyimpan…</span>
+                        {/if}
+                        <button
+                          class="btn btn-ghost btn-sm"
+                          onclick={() => (extendFor = '')}
+                          disabled={busyId === r.id}
+                        >
+                          Batal
+                        </button>
+                        <div class="grow"></div>
+                        <span class="tiny muted">
+                          Sisa sekarang {sisa(r.days_left)}. Waktu yang belum habis tidak hangus.
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+              {#if filtered.length === 0}
+                <tr><td colspan="7" class="center muted">Tidak ada yang cocok.</td></tr>
+              {/if}
+            </tbody>
+          </table>
+        </div>
+      {/if}
     </div>
+
+    <!-- ----------------------------------------------------- panel terpasang -- -->
+    <PanelDeploy
+      {instances}
+      {instError}
+      bind:bukaForm={formPanel}
+      onpanelbaru={panelBaru}
+      on401={sesiHabis}
+      onmuatulang={muatReferensi}
+    />
 
     <!-- -------------------------------------------------------- aktivitas -- -->
     <div class="grid cols-2 mt-3">
