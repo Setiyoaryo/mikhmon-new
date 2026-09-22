@@ -65,6 +65,12 @@ if ($currency == in_array($currency, $cekindo['indo'])) {
     $getprice = "10";
     $price = $currency . " " . number_format((float)$getprice, 2);
 }
+/*
+ * Ini cuma contoh di pratinjau, tapi beberapa template (termasuk yang dipakai
+ * pelanggan) memilih WARNA voucher dari harga jual. Tanpa nilai ini warnanya
+ * jatuh ke warna cadangan, jadi pratinjaunya tidak sama dengan hasil cetak.
+ */
+$getsprice = $getprice;
   
   
   if ($getdatalimit == 0) {

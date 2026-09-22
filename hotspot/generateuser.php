@@ -96,8 +96,21 @@ date_default_timezone_set($_SESSION['timezone']);
 		$getprice = explode(",", $ponlogin)[2];
 		$getsprice = explode(",", $ponlogin)[4];
 		$getlock = explode(",", $ponlogin)[6];
+		/*
+		 * Harga jual yang diisi di sini berlaku untuk batch ini saja. Kalau
+		 * dikosongkan, harganya tetap dari profil seperti sebelumnya - jadi
+		 * cara lama tidak berubah. Tanpa kolom ini, satu-satunya cara
+		 * mengubah harga voucher adalah mengubah profilnya, dan itu ikut
+		 * mengubah voucher lama kalau dicetak ulang.
+		 */
+		$vsprice = isset($_POST['vsprice']) ? preg_replace('/[^0-9]/', '', (string) $_POST['vsprice']) : '';
+		if ($vsprice !== '') {
+			$getsprice = $vsprice;
+		}
 		$_SESSION['ubp'] = $profile;
 		$commt = $user . "-" . rand(100, 999) . "-" . date("m.d.y") . "-" . $adcomment;
+		include_once(dirname(__FILE__) . '/../include/voucherharga.php');
+		mikhmon_voucher_harga_put($commt, array('price' => $getprice, 'sprice' => $getsprice));
 		$gentemp = $commt . "|~" . $profile . "~" . $getvalid . "~" . $getprice . "!".$getsprice."~" . $timelimit . "~" . $datalimit . "~" . $getlock;
 		$gen = '<?php $genu="'.encrypt($gentemp).'";?>';
 		$temp = './voucher/temp.php';
@@ -432,6 +445,18 @@ date_default_timezone_set($_SESSION['timezone']);
   </tr>
 	<tr>
     <td class="align-middle"><?= $_comment ?></td><td><input class="form-control " type="text" title="No special characters" id="comment" autocomplete="off" name="adcomment" value=""></td>
+  </tr>
+	<tr>
+    <td class="align-middle"><?= $_selling_price ?></td><td>
+      <div class="input-group">
+        <div class="input-group-10 col-box-9">
+          <input class="group-item group-item-l" type="number" min="0" autocomplete="off" name="vsprice" value="" placeholder="<?= $_profile ?>" title="Kosongkan untuk memakai harga dari profil">
+        </div>
+        <div class="input-group-2 col-box-3">
+          <div class="group-item group-item-r pd-2p5 text-center" title="Kosongkan untuk memakai harga dari profil"><i class="fa fa-info-circle"></i></div>
+        </div>
+      </div>
+    </td>
   </tr>
    <tr >
     <td  colspan="4" class="align-middle w-12"  id="GetValidPrice">

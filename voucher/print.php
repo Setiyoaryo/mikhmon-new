@@ -79,6 +79,20 @@ if (!isset($_SESSION["mikhmon"])) {
   $getprice = explode(",", $ponlogin)[2];
   $getsprice = explode(",", $ponlogin)[4];
 
+  /*
+   * Kalau batch ini dibuat lewat halaman Generate dengan harga yang diisi di
+   * situ, harga itulah yang dipakai - bukan harga profil. Dengan begitu
+   * voucher lama tetap mencetak harga saat penjualannya walau harga di profil
+   * sudah diubah, dan batch lama yang tidak punya catatan tetap seperti dulu.
+   */
+  include_once(dirname(__FILE__) . '/../include/voucherharga.php');
+  $batch = isset($getuser[0]['comment']) ? $getuser[0]['comment'] : '';
+  $catatanharga = mikhmon_voucher_harga_get($batch);
+  if (is_array($catatanharga)) {
+    $getprice = (isset($catatanharga['price']) && $catatanharga['price'] !== '') ? $catatanharga['price'] : "0";
+    $getsprice = (isset($catatanharga['sprice']) && $catatanharga['sprice'] !== '') ? $catatanharga['sprice'] : "0";
+  }
+
  
   
     if($getsprice == "0" && $getprice != "0"){
