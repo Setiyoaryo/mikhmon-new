@@ -36,7 +36,15 @@ include_once(dirname(__FILE__) . '/../include/vouchertemplate.php');
 
 
 $url = $_SERVER['REQUEST_URI'];
-$telplate = $_GET['template'];
+$telplate = isset($_GET['template']) ? $_GET['template'] : '';
+/*
+ * Halaman ini dulu bisa terbuka tanpa template terpilih - mis. dari menu -
+ * dan yang tampil kotak kosong: tidak ada isinya, dan tombol Simpan di situ
+ * menulis ke berkas yang salah. Bawaannya sekarang Default.
+ */
+if ($telplate === '') {
+	$telplate = 'default';
+}
 if ($telplate == "default" || $telplate == "rdefault") {
 	$telplatet = "template";
 	$popup = "javascript:window.open('./voucher/vpreview.php?usermode=up&qr=no&session=" . $session . "','_blank','width=310,height=310')";
