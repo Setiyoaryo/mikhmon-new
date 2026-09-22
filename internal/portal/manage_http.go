@@ -237,3 +237,15 @@ func parseMonths(v string) int {
 	}
 	return n
 }
+
+func (s *Server) handleDeleteInstance(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteInstance(r.PathValue("id")); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "not_found")
+			return
+		}
+		writeInvalid(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

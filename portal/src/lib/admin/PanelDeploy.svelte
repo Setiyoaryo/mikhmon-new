@@ -1,5 +1,5 @@
 <script>
-  import { adminCreateInstance } from '../api.js'
+  import { adminCreateInstance, adminDeleteInstance } from '../api.js'
   import { pesanGagal, prettyId } from '../format.js'
   import { salinTeks } from '../clipboard.js'
 
@@ -43,6 +43,35 @@
       `  'portal' => '${origin}',\n` +
       ');\n'
     )
+  }
+
+  /*
+   * Menghapus panel dari portal. Kalau masih ada pelanggan di dalamnya,
+   * server yang menolak dan alasannya ditampilkan apa adanya.
+   */
+  async function hapusPanel(ins) {
+    if (busy) return
+    const tanya =
+      `Hapus panel ${ins.name} (${prettyId(ins.id)})?\n\n` +
+      'Panelnya sendiri tetap berjalan, tetapi tidak lagi dikenali portal: ' +
+      'tidak akan bisa melapor, dan tidak akan pernah terkunci.'
+    if (!window.confirm(tanya)) return
+
+    busy = true
+    galat = ''
+    try {
+      await adminDeleteInstance(ins.id)
+      if (lihat === ins.id) lihat = ''
+      onmuatulang()
+    } catch (e) {
+      if (e.status === 401) {
+        on401()
+        return
+      }
+      galat = pesanGagal(e, 'Gagal menghapus panel.')
+    } finally {
+      busy = false
+    }
   }
 
   async function buatPanel(e) {
@@ -279,6 +308,15 @@
                   >
                     <i class="fa fa-file-code-o"></i>
                     {#if lihat === ins.id}Tutup berkas{:else}Berkas{/if}
+                  </button>
+                  <button
+                    class="btn btn-danger btn-sm"
+                    aria-label="Hapus panel {ins.name}"
+                    title="Hapus panel"
+                    disabled={busy}
+                    onclick={() => hapusPanel(ins)}
+                  >
+                    <i class="fa fa-trash"></i>
                   </button>
                 </div>
               </td>

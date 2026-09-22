@@ -122,6 +122,11 @@ export function adminCreateInstance(body) {
   return req('POST', '/admin/instances', body)
 }
 
+/** Ditolak server kalau panelnya masih menangani pelanggan. */
+export function adminDeleteInstance(id) {
+  return req('DELETE', `/admin/instances/${encodeURIComponent(id)}`)
+}
+
 /** body: {name, institution, wa, session_name, instance_id, plan_code} */
 export function adminCreateCustomer(body) {
   return req('POST', '/admin/customers', body)

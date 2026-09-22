@@ -278,3 +278,25 @@ func (s *Store) DeleteCustomer(id string) error {
 	_ = s.LogEvent(fmt.Sprintf("Pelanggan %s dihapus.", cust.Institution))
 	return nil
 }
+
+// DeleteInstance menghapus pemasangan panel. Ditolak kalau masih ada pelanggan
+// di dalamnya, supaya tidak ada pelanggan yang menggantung tanpa panel.
+func (s *Store) DeleteInstance(id string) error {
+	inst, err := s.InstanceByID(id)
+	if err != nil {
+		return err
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM customers WHERE instance_id = ?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return invalid("Panel ini masih menangani %d pelanggan. "+
+			"Pindahkan atau hapus pelanggannya dulu.", n)
+	}
+	if _, err := s.db.Exec(`DELETE FROM instances WHERE id = ?`, id); err != nil {
+		return err
+	}
+	_ = s.LogEvent("Pemasangan panel " + inst.Name + " dihapus.")
+	return nil
+}

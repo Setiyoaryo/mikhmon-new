@@ -65,6 +65,7 @@ func NewServer(cfg Config, store *Store) *Server {
 	s.mux.HandleFunc("GET /api/v1/admin/plans", s.admin(s.handlePlans))
 	s.mux.HandleFunc("GET /api/v1/admin/instances", s.admin(s.handleInstances))
 	s.mux.HandleFunc("POST /api/v1/admin/instances", s.admin(s.handleCreateInstance))
+	s.mux.HandleFunc("DELETE /api/v1/admin/instances/{id}", s.admin(s.handleDeleteInstance))
 	s.mux.HandleFunc("POST /api/v1/admin/customers", s.admin(s.handleCreateCustomer))
 	s.mux.HandleFunc("PATCH /api/v1/admin/customers/{id}", s.admin(s.handleUpdateCustomer))
 	s.mux.HandleFunc("POST /api/v1/admin/customers/{id}/extend", s.admin(s.handleExtend))
