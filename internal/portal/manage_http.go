@@ -133,6 +133,7 @@ func (s *Server) handleCreateCustomer(w http.ResponseWriter, r *http.Request) {
 		SessionName string `json:"session_name"`
 		InstanceID  string `json:"instance_id"`
 		PlanCode    string `json:"plan_code"`
+		ValidUntil  string `json:"valid_until"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request")
@@ -145,6 +146,7 @@ func (s *Server) handleCreateCustomer(w http.ResponseWriter, r *http.Request) {
 		SessionName: req.SessionName,
 		InstanceID:  req.InstanceID,
 		PlanCode:    req.PlanCode,
+		ValidUntil:  req.ValidUntil,
 	})
 	if err != nil {
 		writeInvalid(w, err)

@@ -63,6 +63,7 @@ type NewCustomer struct {
 	SessionName string
 	InstanceID  string
 	PlanCode    string // opsional: langsung memberi masa berlaku
+	ValidUntil  string // opsional: YYYY-MM-DD, dipakai saat mendaftarkan pelanggan lama
 }
 
 // CustomerEdit adalah perubahan data pelanggan yang diizinkan.
@@ -157,8 +158,21 @@ func (s *Store) CreateCustomer(in NewCustomer) (Customer, error) {
 		return Customer{}, err
 	}
 
+	/*
+	 * Masa berlaku bisa diberikan dua cara: lewat paket (dihitung dari hari
+	 * ini), atau lewat tanggal berakhir yang disebut langsung. Yang kedua
+	 * dipakai saat mendaftarkan pelanggan lama ke portal, supaya tanggalnya
+	 * bisa disamakan dengan yang sudah berjalan di panel.
+	 */
 	validFrom, validUntil := "", ""
-	if in.PlanCode != "" {
+	if in.ValidUntil != "" {
+		until, err := time.ParseInLocation("2006-01-02", in.ValidUntil, loc)
+		if err != nil {
+			return Customer{}, invalid("Tanggal berakhir tidak sah. Pakai format YYYY-MM-DD.")
+		}
+		validFrom = today().Format("2006-01-02")
+		validUntil = until.Format("2006-01-02")
+	} else if in.PlanCode != "" {
 		plan, err := s.PlanByCode(in.PlanCode)
 		if err != nil {
 			return Customer{}, invalid("Paket tidak dikenal.")
