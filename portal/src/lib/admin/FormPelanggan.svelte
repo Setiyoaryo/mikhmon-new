@@ -4,6 +4,19 @@
   import { salinTeks } from '../clipboard.js'
 
   /*
+   * Domain panel (<nama>.<domain>) diturunkan dari alamat portal yang sedang
+   * dibuka, bukan ditulis di kode: portal ini dilayani di control.nocify.id
+   * waktu produksi dan di alamat lain waktu diuji. Satu label pertama dibuang,
+   * jadi control.nocify.id menjadi nocify.id. Kalau nanti domain panel
+   * dipisah dari domain portal, ganti HANYA di sini.
+   */
+  const DOMAIN_PANEL = (() => {
+    const host = typeof location !== 'undefined' ? location.hostname : ''
+    const titik = host.indexOf('.')
+    return titik === -1 ? host : host.slice(titik + 1)
+  })()
+
+  /*
    * Form tambah/ubah pelanggan.
    *
    * Dipakai dua mode: "baru" (POST, lalu menampilkan panel hasil berisi
@@ -74,7 +87,7 @@
     if (!hasil) return ''
     return (
       `Halo ${hasil.name}, panel Mikhmon untuk ${hasil.institution} sudah disiapkan.\n\n` +
-      `Alamat panel : https://${hasil.session_name}.nocify.id\n` +
+      `Alamat panel : https://${hasil.session_name}.${DOMAIN_PANEL}\n` +
       `Sesi panel   : ${hasil.session_name}\n` +
       `Tautan bayar : ${hasil.pay_url}\n\n` +
       `Tautan itu berisi QRIS untuk mengaktifkan langganan. Hubungi kami kalau ada yang perlu dibantu.`
@@ -173,9 +186,9 @@
     <div class="grid cols-2 mt-3">
       <div>
         <div class="tiny muted">ALAMAT PANEL</div>
-        <div class="mono" style="font-size:15px">https://{hasil.session_name}.nocify.id</div>
+        <div class="mono" style="font-size:15px">https://{hasil.session_name}.{DOMAIN_PANEL}</div>
         <div class="row wrap mt-2">
-          <button class="btn btn-ghost btn-sm" onclick={() => salin(`https://${hasil.session_name}.nocify.id`, 'panel')}>
+          <button class="btn btn-ghost btn-sm" onclick={() => salin(`https://${hasil.session_name}.${DOMAIN_PANEL}`, 'panel')}>
             <i class="fa {tersalin === 'panel' ? 'fa-check' : 'fa-copy'}"></i>
             {#if tersalin === 'panel'}Tersalin{:else}Salin alamat{/if}
           </button>
@@ -322,7 +335,7 @@
         />
         <div class="tiny mt-1">
           {#if sub}
-            <span class="mono cl-primary">{sub}</span><span class="muted mono">.nocify.id</span>
+            <span class="mono cl-primary">{sub}</span><span class="muted mono">.{DOMAIN_PANEL}</span>
           {:else}
             <span class="muted">Isi subdomain untuk melihat alamat panelnya.</span>
           {/if}

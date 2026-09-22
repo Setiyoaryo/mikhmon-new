@@ -213,11 +213,9 @@ func (s *Server) lastPlanCode(customerID string) string {
 		`SELECT plan_code FROM payments WHERE customer_id = ? AND status = 'approved'
 		 ORDER BY decided_at DESC LIMIT 1`, customerID).Scan(&code)
 	if err != nil || code == "" {
-		// Belum pernah bayar: pakai paket termurah sebagai tampilan awal.
-		if plans, perr := s.store.Plans(true); perr == nil && len(plans) > 0 {
-			return plans[0].Code
-		}
-		return ""
+		// Belum pernah bayar: pakai paket cadangan yang sama dengan yang
+		// dihitung PlanUsage, supaya keduanya tidak bisa berbeda.
+		return fallbackPlanCode(s.store.db)
 	}
 	return code
 }
@@ -473,6 +471,7 @@ type adminClaim struct {
 	PlanCode    string `json:"plan_code"`
 	PlanLabel   string `json:"plan_label"`
 	Amount      int64  `json:"amount"`
+	Months      int    `json:"months"`
 	Ref         string `json:"ref"`
 	CreatedAt   string `json:"created_at"`
 	Age         string `json:"age"`
@@ -515,7 +514,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	for _, c := range claims {
 		v := adminClaim{
 			ID: c.ID, Customer: c.Customer, Institution: c.Institution,
-			PlanCode: c.PlanCode, Amount: c.Amount, Ref: c.Ref,
+			PlanCode: c.PlanCode, Amount: c.Amount, Months: c.Months, Ref: c.Ref,
 			CreatedAt: c.CreatedAt, Age: humanAgo(c.CreatedAt),
 		}
 		if p, err := s.store.PlanByCode(c.PlanCode); err == nil {

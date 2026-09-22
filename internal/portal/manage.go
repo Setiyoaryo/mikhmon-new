@@ -1,6 +1,7 @@
 package portal
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -453,17 +454,27 @@ func validatePlan(in PlanInput) (PlanInput, error) {
 
 // PlanUsage menghitung berapa pelanggan yang memakai tiap paket.
 func (s *Store) PlanUsage() (map[string]int, error) {
+	return planUsage(s.db)
+}
+
+// planUsage menjalankan perhitungan yang sama di dalam transaksi, supaya
+// penghapusan paket memakai angka yang tidak berubah di sela-selanya.
+func planUsage(q queryer) (map[string]int, error) {
 	// Pelanggan tidak menyimpan kode paket di tabelnya sendiri: paket yang
 	// berlaku adalah paket dari pembayaran terakhir yang disetujui, sama
-	// seperti yang dipakai halaman admin dan halaman pembayaran.
-	rows, err := s.db.Query(`
-		SELECT COALESCE((
-		         SELECT p.plan_code FROM payments p
-		          WHERE p.customer_id = c.id AND p.status = 'approved'
-		          ORDER BY p.decided_at DESC LIMIT 1), '') AS kode,
+	// seperti yang dipakai halaman admin dan halaman pembayaran. Pelanggan
+	// yang belum pernah membayar dihitung ke paket cadangan yang sama dengan
+	// lastPlanCode; tanpa itu paket cadangan tampak kosong padahal daftar
+	// pelanggan admin menunjukkan mereka memakai paket itu.
+	rows, err := q.QueryContext(context.Background(), `
+		SELECT COALESCE(
+		         NULLIF((SELECT p.plan_code FROM payments p
+		                  WHERE p.customer_id = c.id AND p.status = 'approved'
+		                  ORDER BY p.decided_at DESC LIMIT 1), ''),
+		         ?) AS kode,
 		       COUNT(*)
 		  FROM customers c
-		 GROUP BY kode`)
+		 GROUP BY kode`, fallbackPlanCode(q))
 	if err != nil {
 		return nil, err
 	}
@@ -503,10 +514,28 @@ func (s *Store) SavePlan(in PlanInput) (Plan, error) {
 		`INSERT INTO plans (code, label, months, price, note, sort, sale)
 		 VALUES (?, ?, ?, ?, ?, ?, 1)`,
 		in.Code, in.Label, in.Months, in.Price, in.Note, sort); err != nil {
+		// Pemeriksaan PlanByCode di atas bisa dilewati dua permintaan yang
+		// datang hampir bersamaan; saat itu PRIMARY KEY di basis data yang
+		// menolak. Pesannya diterjemahkan supaya admin melihat sebabnya
+		// sebagai masukan yang salah (400), bukan 500.
+		if isUniqueViolation(err) {
+			return Plan{}, invalid("Kode paket %s sudah dipakai paket lain.", in.Code)
+		}
 		return Plan{}, err
 	}
 	_ = s.LogEvent(fmt.Sprintf("Paket %s dibuat dengan harga %d.", in.Code, in.Price))
 	return s.PlanByCode(in.Code)
+}
+
+// isUniqueViolation mendeteksi pelanggaran UNIQUE/PRIMARY KEY dari driver
+// modernc. Tidak ada tipe galat khusus yang bisa dipakai, jadi teks galatnya
+// yang diperiksa; itu cukup untuk menerjemahkan bentrok kode paket jadi 400.
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique constraint") || strings.Contains(msg, "primary key")
 }
 
 // UpdatePlan mengubah paket yang sudah ada. Kode paket tidak ikut diubah.
@@ -537,39 +566,68 @@ func (s *Store) UpdatePlan(code string, in PlanInput) (Plan, error) {
 }
 
 /*
- * DeletePlan menghapus paket. Ditolak kalau masih ada pelanggan yang memakainya,
- * karena pelanggan tanpa paket tidak bisa memperpanjang sendiri dari halaman
- * pembayaran - lebih baik admin memindahkan pelanggannya dulu.
+ * DeletePlan menghapus paket. Pemeriksaan dan penghapusan dijalankan dalam
+ * satu transaksi BEGIN IMMEDIATE, supaya tidak ada klaim baru yang dibuat
+ * atau disetujui di sela pemeriksaan dan paketnya terhapus padahal masih
+ * dirujuk.
+ *
+ * Ada tiga hal yang menahan penghapusan: pelanggan yang memakai paket itu,
+ * pembayaran yang belum diputus, dan paket itu satu-satunya yang dijual.
+ * Karena portal belum punya cara memindahkan paket pelanggan, admin
+ * diberitahu bahwa pelanggannya harus membeli paket lain lebih dulu.
  */
 func (s *Store) DeletePlan(code string) error {
 	code = NormalizePlanCode(code)
-	plan, err := s.PlanByCode(code)
-	if err != nil {
-		return err
-	}
 
-	usage, err := s.PlanUsage()
-	if err != nil {
-		return err
-	}
-	if n := usage[code]; n > 0 {
-		return ErrInUse{Msg: fmt.Sprintf(
-			"Paket %s masih dipakai %d pelanggan. Pindahkan dulu pelanggannya ke paket lain.", plan.Label, n)}
-	}
+	err := s.withImmediateTx(func(q queryer) error {
+		plan, err := planFrom(q, code)
+		if err != nil {
+			return err
+		}
 
-	// Pembayaran yang belum diputus juga menahan penghapusan: waktu disetujui,
-	// paketnya harus masih ada supaya masa berlakunya bisa dihitung.
-	var menunggu int
-	if err := s.db.QueryRow(
-		`SELECT COUNT(*) FROM payments WHERE plan_code = ? AND status = 'pending'`, code).Scan(&menunggu); err != nil {
+		usage, err := planUsage(q)
+		if err != nil {
+			return err
+		}
+		if n := usage[code]; n > 0 {
+			return ErrInUse{Msg: fmt.Sprintf(
+				"Paket %s masih dipakai %d pelanggan, jadi belum bisa dihapus. "+
+					"Pelanggan itu harus membeli paket lain lebih dulu.", plan.Label, n)}
+		}
+
+		// Pembayaran yang belum diputus masih merujuk paket ini, jadi paketnya
+		// tidak boleh hilang sebelum klaimnya jelas: setujui (durasi yang
+		// dibeli sudah tersimpan di klaim) atau tolak.
+		var menunggu int
+		if err := q.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM payments WHERE plan_code = ? AND status = 'pending'`, code).Scan(&menunggu); err != nil {
+			return err
+		}
+		if menunggu > 0 {
+			return ErrInUse{Msg: fmt.Sprintf(
+				"Paket %s masih menunggu %d pembayaran yang belum diputus, jadi belum bisa dihapus. "+
+					"Putuskan dulu pembayarannya, disetujui atau ditolak.", plan.Label, menunggu)}
+		}
+
+		// Setidaknya harus tersisa satu paket yang dijual: dari daftar itu
+		// pelanggan baru dan pelanggan yang belum pernah membayar mengambil
+		// paketnya, jadi menghapus yang terakhir membuat semuanya buntu.
+		var sisa int
+		if err := q.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM plans WHERE sale = 1 AND code <> ?`, code).Scan(&sisa); err != nil {
+			return err
+		}
+		if sisa == 0 {
+			return ErrInUse{Msg: fmt.Sprintf(
+				"Paket %s adalah paket terakhir yang dijual, jadi belum bisa dihapus. "+
+					"Minimal harus ada satu paket, kalau tidak pelanggan tidak bisa memperpanjang sama sekali.",
+				plan.Label)}
+		}
+
+		_, err = q.ExecContext(context.Background(), `DELETE FROM plans WHERE code = ?`, code)
 		return err
-	}
-	if menunggu > 0 {
-		return ErrInUse{Msg: fmt.Sprintf(
-			"Paket %s masih menunggu %d pembayaran yang belum diputus. Putuskan dulu pembayarannya.",
-			plan.Label, menunggu)}
-	}
-	if _, err := s.db.Exec(`DELETE FROM plans WHERE code = ?`, code); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	_ = s.LogEvent(fmt.Sprintf("Paket %s dihapus.", code))

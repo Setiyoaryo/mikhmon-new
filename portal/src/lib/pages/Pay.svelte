@@ -7,6 +7,14 @@
   /* Dipakai kalau tautannya tidak dikenali: nomor WA NOCIFY. */
   const WA_FALLBACK = '6285139495106'
 
+  /*
+   * Alamat portal diambil dari alamat yang sedang dibuka, bukan ditulis di
+   * kode: portal yang sama bisa dilayani di alamat lain (control.nocify.id di
+   * produksi, localhost waktu diuji), dan alamat yang salah akan membuat
+   * pelanggan mengira halaman pembayarannya bukan milik Anda.
+   */
+  const HOST = typeof location !== 'undefined' ? location.host : ''
+
   let params = $derived(match('/pay/:token', $path))
   let token = $derived(params ? params.token : '')
 
@@ -105,7 +113,7 @@
     <span class="sub">Billing Mikhmon</span>
   </div>
   <div class="grow"></div>
-  <span class="tiny muted mono nowrap">portal.nocify.id</span>
+  <span class="tiny muted mono nowrap">{HOST}</span>
 </div>
 
 <div class="wrap narrow">
@@ -353,7 +361,7 @@
     </div>
 
     <div class="center muted tiny mt-3">
-      QRIS merchant milik NOCIFY &middot; halaman ini hanya ada di portal.nocify.id
+      QRIS merchant milik NOCIFY &middot; halaman ini hanya ada di {HOST}
     </div>
   {/if}
 </div>

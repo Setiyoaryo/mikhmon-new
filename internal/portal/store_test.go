@@ -106,6 +106,11 @@ func TestMigrateFreshDatabase(t *testing.T) {
 	if hasColumn(t, st, "instances", "customer_id") {
 		t.Error("instances.customer_id masih ada di basis data baru")
 	}
+	// DDL basis data baru harus langsung memuat durasi pembelian yang
+	// dibekukan, bukan menunggu migrasi menambahkannya.
+	if !hasColumn(t, st, "payments", "months") {
+		t.Error("payments.months tidak ada di basis data baru")
+	}
 }
 
 // legacyDDL adalah bentuk basis data sebelum migrasi (satu instance satu
@@ -253,6 +258,18 @@ func TestMigrateLegacyDatabase(t *testing.T) {
 	var status string
 	if err := st.db.QueryRow(`SELECT status FROM payments WHERE id = 'p3'`).Scan(&status); err != nil || status != "pending" {
 		t.Errorf("payments p3 = %q/%v, mau pending", status, err)
+	}
+	// Langkah versi 2 menambah kolom durasi; pembayaran lama belum punya
+	// durasi tersimpan, jadi nilainya 0 dan penyetujuannya memakai durasi paket.
+	if !hasColumn(t, st, "payments", "months") {
+		t.Error("payments.months tidak bertambah saat migrasi")
+	}
+	var months int
+	if err := st.db.QueryRow(`SELECT months FROM payments WHERE id = 'p1'`).Scan(&months); err != nil {
+		t.Fatalf("baca payments.months: %v", err)
+	}
+	if months != 0 {
+		t.Errorf("payments.months baris lama = %d, mau 0", months)
 	}
 
 	// Migrasi kedua kali harus aman: buka ulang dari berkas yang sama.
@@ -438,5 +455,65 @@ func TestHeartbeatDedicatedWithoutTenant(t *testing.T) {
 	code, body = doHeartbeat(t, h, map[string]any{"instance_id": "I2", "token": "tok2"})
 	if code != http.StatusNotFound || body["error"] != "unknown_instance" {
 		t.Fatalf("status/error = %d/%v, mau 404/unknown_instance", code, body["error"])
+	}
+}
+
+/* -------------------------------------------------------- migrasi v1 ke v2 */
+
+// writeV1Database membuat basis data yang sudah ditandai versi 1 tetapi tabel
+// payments-nya belum punya kolom months, seperti basis data yang dibuat
+// sebelum langkah versi 2 ada. Satu baris pembayaran disimpan supaya kenaikan
+// versi bisa diperiksa tidak menghilangkan data.
+func writeV1Database(t *testing.T, path string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("buka basis data versi 1: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(legacyDDL); err != nil {
+		t.Fatalf("buat skema versi 1: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO customers (id, name, institution, wa, pay_token, valid_from, valid_until, suspended, created_at)
+		VALUES ('c1', 'Taufiq', 'Taufiq.net', '', 'NOC-FF1D-D59D', '2026-08-27', '2026-12-26', 0, '2026-09-22T09:00:58+07:00');
+		INSERT INTO payments (id, customer_id, plan_code, amount, status, ref, created_at, decided_at)
+		VALUES ('p1', 'c1', 'P1M', 50000, 'approved', 'NOC-3EA3-0366', '2026-08-27T09:00:58+07:00', '2026-08-27T09:00:58+07:00');`); err != nil {
+		t.Fatalf("isi basis data versi 1: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatalf("tandai versi 1: %v", err)
+	}
+}
+
+// TestMigrateV1ToV2KeepsRows memastikan basis data versi 1 naik ke versi 2
+// tanpa kehilangan baris: kolom months bertambah dan barisnya masih utuh.
+func TestMigrateV1ToV2KeepsRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "portal.db")
+	writeV1Database(t, path)
+
+	st, err := OpenStore(path)
+	if err != nil {
+		t.Fatalf("OpenStore atas basis data versi 1: %v", err)
+	}
+	defer st.Close()
+
+	if v := userVersion(t, st); v != 2 {
+		t.Fatalf("user_version = %d, mau 2", v)
+	}
+	if !hasColumn(t, st, "payments", "months") {
+		t.Fatal("kolom payments.months tidak bertambah saat naik dari versi 1")
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM payments`); n != 1 {
+		t.Fatalf("jumlah payments = %d, mau 1 (baris lama hilang)", n)
+	}
+	var plan string
+	var amount, months int
+	if err := st.db.QueryRow(`SELECT plan_code, amount, months FROM payments WHERE id = 'p1'`).
+		Scan(&plan, &amount, &months); err != nil {
+		t.Fatalf("baca pembayaran lama: %v", err)
+	}
+	if plan != "P1M" || amount != 50000 || months != 0 {
+		t.Errorf("baris lama berubah: plan=%q amount=%d months=%d, mau P1M/50000/0", plan, amount, months)
 	}
 }

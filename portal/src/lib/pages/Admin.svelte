@@ -1,6 +1,7 @@
 <script>
   import Login from './Login.svelte'
   import FormPelanggan from '../admin/FormPelanggan.svelte'
+  import PaketHarga from '../admin/PaketHarga.svelte'
   import PanelDeploy from '../admin/PanelDeploy.svelte'
   import QrisPembayaran from '../admin/QrisPembayaran.svelte'
   import { salinTeks } from '../clipboard.js'
@@ -592,6 +593,16 @@
       onpesan={(m) => (flash = m)}
       onmuatulang={refresh}
       on401={sesiHabis}
+    />
+
+    <!-- --------------------------------------------------------- paket harga -- -->
+    <PaketHarga
+      {plans}
+      planError={instError}
+      planMemuat={loading}
+      onchanged={refresh}
+      on401={sesiHabis}
+      onmuatulang={muatReferensi}
     />
 
     <!-- -------------------------------------------------------- aktivitas -- -->

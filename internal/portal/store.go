@@ -6,6 +6,7 @@
 package portal
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -75,27 +76,33 @@ func (s *Store) Close() error { return s.db.Close() }
 // schemaVersion adalah versi skema yang disimpan di PRAGMA user_version.
 // Angka ini dinaikkan setiap kali bentuk tabel berubah, supaya basis data lama
 // bisa ditingkatkan di tempat tanpa kehilangan baris.
-const schemaVersion = 1
+const schemaVersion = 2
 
 func (s *Store) migrate() error {
 	var v int
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
 		return err
 	}
-	if v >= schemaVersion {
-		return nil
+	// Langkah dipilih dari versi yang tersimpan, satu per satu: basis data
+	// yang tertinggal dua langkah harus menjalankan keduanya, bukan melompat
+	// ke langkah terakhir.
+	if v < 1 {
+		if err := s.migrateToV1(); err != nil {
+			return err
+		}
 	}
-	// Baru ada satu langkah: versi 0 (satu instance = satu pelanggan) ke
-	// versi 1 (satu instance boleh melayani banyak pelanggan).
-	return s.migrateToV1()
+	if v < 2 {
+		return s.migrateToV2()
+	}
+	return nil
 }
 
 // migrateToV1 mengubah model lama menjadi model pemasangan bersama.
 //
 // Seluruh perubahan, termasuk penanda user_version, dijalankan dalam satu
 // transaksi. Kalau prosesnya mati di tengah, basis datanya kembali ke keadaan
-// semula. Menjalankannya dua kali juga aman: pemanggilan kedua melihat versi
-// sudah 1 dan langsung kembali.
+// semula, dan langkah yang belum selesai akan dicoba lagi saat dibuka
+// berikutnya.
 func (s *Store) migrateToV1() error {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -140,7 +147,33 @@ func (s *Store) migrateToV1() error {
 		}
 	}
 
-	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+	// Ditulis 1, bukan schemaVersion: setelah langkah ini masih ada langkah
+	// versi 2 yang harus dijalankan, jadi penandanya tidak boleh melompat ke
+	// versi terakhir.
+	if _, err := tx.Exec(`PRAGMA user_version = 1`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateToV2 membekukan durasi pembelian di klaim: kolom payments.months
+// mencatat berapa bulan yang dibeli saat klaim dibuat, jadi mengubah paket
+// sesudahnya tidak mengubah masa berlaku yang didapat pelanggan.
+//
+// Sama seperti v1, perubahan dan penanda versinya dijalankan dalam satu
+// transaksi; menjalankannya lagi aman karena addColumn melewati kolom yang
+// sudah ada.
+func (s *Store) migrateToV2() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := addColumn(tx, "payments", "months", `INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`PRAGMA user_version = 2`); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -178,6 +211,7 @@ CREATE TABLE IF NOT EXISTS payments (
   customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
   plan_code   TEXT NOT NULL,
   amount      INTEGER NOT NULL,
+  months      INTEGER NOT NULL DEFAULT 0,
   status      TEXT NOT NULL,
   ref         TEXT NOT NULL,
   created_at  TEXT NOT NULL,
@@ -312,6 +346,57 @@ func addColumn(tx *sql.Tx, table, column, definition string) error {
 	return err
 }
 
+// queryer menyatukan *sql.DB, *sql.Tx, dan *sql.Conn supaya aturan yang sama
+// bisa dijalankan di dalam maupun di luar transaksi tanpa dua salinan.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+/*
+ * withImmediateTx menjalankan fn di dalam satu transaksi BEGIN IMMEDIATE.
+ * Kunci tulis diambil sejak awal, jadi rangkaian baca-lalu-tulis tidak bisa
+ * disusupi perubahan lain di sela-selanya. Ini aman karena pool-nya satu
+ * koneksi (SetMaxOpenConns(1)): tidak ada operasi lain yang bisa menyelinap
+ * di tengah transaksi.
+ *
+ * Koneksinya dipegang langsung, bukan lewat db.Begin, karena database/sql
+ * memulai transaksi dengan BEGIN biasa; BEGIN IMMEDIATE harus ditulis sendiri.
+ */
+func (s *Store) withImmediateTx(fn func(q queryer) error) error {
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		return err
+	}
+	if err := fn(conn); err != nil {
+		_, _ = conn.ExecContext(ctx, `ROLLBACK`)
+		return err
+	}
+	_, err = conn.ExecContext(ctx, `COMMIT`)
+	return err
+}
+
+// fallbackPlanCode adalah satu-satunya definisi paket cadangan: paket pertama
+// yang masih dijual, sama dengan yang dipakai halaman pembayaran. Pelanggan
+// yang belum pernah membayar dianggap memakai paket ini, jadi PlanUsage dan
+// daftar pelanggan admin tidak bisa menghitungnya berbeda.
+func fallbackPlanCode(q queryer) string {
+	var code string
+	err := q.QueryRowContext(context.Background(),
+		`SELECT code FROM plans WHERE sale = 1 ORDER BY sort, price LIMIT 1`).Scan(&code)
+	if err != nil {
+		return ""
+	}
+	return code
+}
+
 /* ------------------------------------------------------------------ model */
 
 // Plan adalah satu paket sewa.
@@ -351,7 +436,9 @@ type Instance struct {
 	LastSeen   string
 }
 
-// Claim adalah klaim pembayaran dari pelanggan.
+// Claim adalah klaim pembayaran dari pelanggan. Months adalah durasi yang
+// dibeli saat klaim dibuat; disimpan di klaim supaya perubahan paket
+// sesudahnya tidak mengubah masa berlaku yang diterima pelanggan.
 type Claim struct {
 	ID          string
 	CustomerID  string
@@ -360,6 +447,7 @@ type Claim struct {
 	PlanCode    string
 	PlanLabel   string
 	Amount      int64
+	Months      int
 	Status      string
 	Ref         string
 	CreatedAt   string
@@ -391,17 +479,25 @@ func (s *Store) Plans(saleOnly bool) ([]Plan, error) {
 	return out, rows.Err()
 }
 
-// PlanByCode mengambil satu paket.
-func (s *Store) PlanByCode(code string) (Plan, error) {
+// scanPlan membaca satu baris paket dari hasil kueri.
+func scanPlan(row interface{ Scan(...any) error }) (Plan, error) {
 	var p Plan
-	err := s.db.QueryRow(
-		`SELECT code, label, months, price, note FROM plans WHERE code = ?`, code,
-	).Scan(&p.Code, &p.Label, &p.Months, &p.Price, &p.Note)
+	err := row.Scan(&p.Code, &p.Label, &p.Months, &p.Price, &p.Note)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
 	return p, err
 }
+
+// planFrom mengambil satu paket lewat queryer mana pun, supaya aturan paket
+// bisa dijalankan juga di dalam transaksi.
+func planFrom(q queryer, code string) (Plan, error) {
+	return scanPlan(q.QueryRowContext(context.Background(),
+		`SELECT code, label, months, price, note FROM plans WHERE code = ?`, code))
+}
+
+// PlanByCode mengambil satu paket.
+func (s *Store) PlanByCode(code string) (Plan, error) { return planFrom(s.db, code) }
 
 /* -------------------------------------------------------------- customers */
 
@@ -535,12 +631,12 @@ func (s *Store) TouchInstance(id, version string) error {
 
 /* --------------------------------------------------------------- payments */
 
-const claimCols = `p.id, p.customer_id, c.name, c.institution, p.plan_code, p.amount, p.status, p.ref, p.created_at`
+const claimCols = `p.id, p.customer_id, c.name, c.institution, p.plan_code, p.amount, p.months, p.status, p.ref, p.created_at`
 
 func scanClaim(row interface{ Scan(...any) error }) (Claim, error) {
 	var c Claim
 	err := row.Scan(&c.ID, &c.CustomerID, &c.Customer, &c.Institution,
-		&c.PlanCode, &c.Amount, &c.Status, &c.Ref, &c.CreatedAt)
+		&c.PlanCode, &c.Amount, &c.Months, &c.Status, &c.Ref, &c.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -584,21 +680,26 @@ func (s *Store) CreateClaim(customerID, planCode string) (Claim, error) {
 		return Claim{}, err
 	}
 
-	plan, err := s.PlanByCode(planCode)
-	if err != nil {
-		return Claim{}, err
-	}
-
 	id := "p" + randHex(6)
 	ref := "NOC-" + strings.ToUpper(randHex(2)) + "-" + strings.ToUpper(randHex(2))
 	now := Now().Format(time.RFC3339)
 
-	_, err = s.db.Exec(
-		`INSERT INTO payments (id, customer_id, plan_code, amount, status, ref, created_at)
-		 VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
-		id, customerID, plan.Code, plan.Price, ref, now)
+	// Harga dan durasi disalin sekaligus di dalam INSERT, jadi paketnya tidak
+	// bisa terhapus di sela pemeriksaan: kalau sudah tidak ada, SELECT-nya
+	// tidak menghasilkan baris dan RowsAffected = 0.
+	res, err := s.db.Exec(
+		`INSERT INTO payments (id, customer_id, plan_code, amount, months, status, ref, created_at)
+		 SELECT ?, ?, code, price, months, 'pending', ?, ? FROM plans WHERE code = ?`,
+		id, customerID, ref, now, planCode)
 	if err != nil {
 		return Claim{}, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Claim{}, err
+	}
+	if n != 1 {
+		return Claim{}, ErrNotFound
 	}
 	return s.ClaimByID(id)
 }
@@ -620,9 +721,20 @@ func (s *Store) ApproveClaim(id string) (time.Time, error) {
 	if claim.Status != "pending" {
 		return time.Time{}, fmt.Errorf("claim %s sudah %s", id, claim.Status)
 	}
-	plan, err := s.PlanByCode(claim.PlanCode)
-	if err != nil {
-		return time.Time{}, err
+	// Durasi dibekukan di klaim (payments.months), jadi mengubah paket setelah
+	// pelanggan mengklaim tidak mengubah berapa bulan yang dia dapat. Klaim
+	// dari basis data lama belum menyimpan durasi, jadi untuk itu durasinya
+	// masih diambil dari paket seperti semula. Paket yang sudah dihapus tidak
+	// menghalangi penyetujuan selama durasinya tersimpan di klaim.
+	months := claim.Months
+	label := claim.PlanCode
+	if plan, perr := s.PlanByCode(claim.PlanCode); perr == nil {
+		label = plan.Label
+		if months <= 0 {
+			months = plan.Months
+		}
+	} else if months <= 0 {
+		return time.Time{}, perr
 	}
 	cust, err := s.CustomerByID(claim.CustomerID)
 	if err != nil {
@@ -638,7 +750,7 @@ func (s *Store) ApproveClaim(id string) (time.Time, error) {
 	}
 	// Bulan dihitung dengan menjepit ke hari terakhir bulan tujuan, sama seperti
 	// alat pembuat lisensi sebelumnya: 31 Jan + 1 bulan harus 28/29 Feb.
-	until := addMonths(from, plan.Months)
+	until := addMonths(from, months)
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -657,7 +769,7 @@ func (s *Store) ApproveClaim(id string) (time.Time, error) {
 	if _, err := tx.Exec(`INSERT INTO events (at, text) VALUES (?, ?)`,
 		Now().Format(time.RFC3339),
 		fmt.Sprintf("Pembayaran %s (%s) disetujui. Berlaku sampai %s.",
-			claim.Institution, plan.Label, until.Format("2006-01-02"))); err != nil {
+			claim.Institution, label, until.Format("2006-01-02"))); err != nil {
 		return time.Time{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -798,8 +910,8 @@ func (s *Store) Seed() error {
 		// dibaca.
 		paid := Now().AddDate(0, 0, -26).Format(time.RFC3339)
 		if _, err := s.db.Exec(
-			`INSERT INTO payments (id, customer_id, plan_code, amount, status, ref, created_at, decided_at)
-			 VALUES (?, ?, 'P1M', 50000, 'approved', ?, ?, ?)`,
+			`INSERT INTO payments (id, customer_id, plan_code, amount, months, status, ref, created_at, decided_at)
+			 VALUES (?, ?, 'P1M', 50000, 1, 'approved', ?, ?, ?)`,
 			"p"+randHex(6), custID,
 			"NOC-"+strings.ToUpper(randHex(2))+"-"+strings.ToUpper(randHex(2)),
 			paid, paid); err != nil {

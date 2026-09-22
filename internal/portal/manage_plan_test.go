@@ -3,9 +3,11 @@ package portal
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +99,30 @@ func payTokenFromSeed(t *testing.T, st *Store, session string) string {
 	return token
 }
 
+// customerFromSeed mengambil pelanggan contoh dari label sesinya.
+func customerFromSeed(t *testing.T, st *Store, session string) Customer {
+	t.Helper()
+	var id string
+	if err := st.db.QueryRow(`SELECT id FROM customers WHERE session_name = ?`, session).Scan(&id); err != nil {
+		t.Fatalf("baca pelanggan %s: %v", session, err)
+	}
+	c, err := st.CustomerByID(id)
+	if err != nil {
+		t.Fatalf("CustomerByID(%s): %v", session, err)
+	}
+	return c
+}
+
+// mustDate membaca tanggal YYYY-MM-DD yang sudah ada di basis data.
+func mustDate(t *testing.T, s string) time.Time {
+	t.Helper()
+	d, err := time.ParseInLocation("2006-01-02", s, loc)
+	if err != nil {
+		t.Fatalf("tanggal %q tidak terbaca: %v", s, err)
+	}
+	return d
+}
+
 /* -------------------------------------------------------------- ubah harga */
 
 func TestPlanPriceEditable(t *testing.T) {
@@ -115,11 +141,9 @@ func TestPlanPriceEditable(t *testing.T) {
 	if got := planByCode(t, body, "P1M")["price"]; got.(float64) != 50000 {
 		t.Fatalf("harga awal P1M = %v, mau 50000", got)
 	}
-	if got := planByCode(t, body, "P1M")["customers"]; got.(float64) != 1 {
-		// Dua pelanggan contoh sama-sama punya pembayaran P1M yang disetujui.
-		if got := planByCode(t, body, "P1M")["customers"]; got.(float64) != 2 {
-			t.Fatalf("jumlah pelanggan P1M = %v, mau 2", got)
-		}
+	// Dua pelanggan contoh sama-sama punya pembayaran P1M yang disetujui.
+	if got := planByCode(t, body, "P1M")["customers"]; got.(float64) != 2 {
+		t.Fatalf("jumlah pelanggan P1M = %v, mau 2", got)
 	}
 
 	// Harga diubah menjadi Rp 100.000 per bulan.
@@ -401,7 +425,245 @@ func TestPlanStoreRules(t *testing.T) {
 	if usage["P1M"] != 2 {
 		t.Errorf("PlanUsage[P1M] = %d, mau 2", usage["P1M"])
 	}
-	if usage["P24M"] != 0 {
-		t.Errorf("PlanUsage[P24M] = %d, mau 0", usage["P24M"])
+	// P24M baru dibuat dan belum dipakai siapa pun: kuncinya tidak muncul di
+	// peta pemakaian, bukan muncul dengan nilai 0.
+	if n, ada := usage["P24M"]; ada || n != 0 {
+		t.Errorf("PlanUsage[P24M] = %d (ada = %v), mau tidak ada pemakai", n, ada)
+	}
+}
+
+/* ------------------------------------------------- durasi klaim & hapus paket */
+
+// TestClaimDurationFrozen mengunci janji perbaikan durasi: bulan yang dibeli
+// dibekukan saat klaim dibuat, jadi mengubah paket setelahnya (mis. P1M jadi
+// 12 bulan) tidak menambah masa berlaku pelanggan.
+func TestClaimDurationFrozen(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	cust := customerFromSeed(t, st, "taufiq")
+
+	claim, err := st.CreateClaim(cust.ID, "P1M")
+	if err != nil {
+		t.Fatalf("CreateClaim: %v", err)
+	}
+	if claim.Months != 1 {
+		t.Fatalf("claim.Months = %d, mau 1 (durasi saat klaim dibuat)", claim.Months)
+	}
+
+	// Admin mengubah P1M menjadi paket 12 bulan setelah klaim dibuat.
+	if _, err := st.UpdatePlan("P1M", PlanInput{Label: "1 Bulan", Months: 12, Price: 50000}); err != nil {
+		t.Fatalf("UpdatePlan: %v", err)
+	}
+
+	until, err := st.ApproveClaim(claim.ID)
+	if err != nil {
+		t.Fatalf("ApproveClaim: %v", err)
+	}
+	want := addMonths(mustDate(t, cust.ValidUntil), 1)
+	if !until.Equal(want) {
+		t.Fatalf("berlaku sampai %s, mau %s (1 bulan yang dibeli, bukan 12)",
+			until.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+	after, err := st.CustomerByID(cust.ID)
+	if err != nil {
+		t.Fatalf("CustomerByID: %v", err)
+	}
+	if after.ValidUntil != want.Format("2006-01-02") {
+		t.Errorf("valid_until pelanggan = %s, mau %s", after.ValidUntil, want.Format("2006-01-02"))
+	}
+}
+
+// TestApproveClaimWithoutPlan menjaga klaim yang paketnya terhapus: harga dan
+// durasinya sudah tersimpan di klaim, jadi masa berlakunya tetap bisa dihitung.
+func TestApproveClaimWithoutPlan(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	cust := customerFromSeed(t, st, "taufiq")
+
+	claim, err := st.CreateClaim(cust.ID, "P3M")
+	if err != nil {
+		t.Fatalf("CreateClaim: %v", err)
+	}
+	// Dihapus langsung lewat basis data: DeletePlan memang menolak selama
+	// klaimnya masih menunggu, dan yang diuji di sini jalur pemulihannya.
+	if _, err := st.db.Exec(`DELETE FROM plans WHERE code = 'P3M'`); err != nil {
+		t.Fatalf("hapus paket P3M: %v", err)
+	}
+
+	until, err := st.ApproveClaim(claim.ID)
+	if err != nil {
+		t.Fatalf("ApproveClaim tanpa paket: %v", err)
+	}
+	want := addMonths(mustDate(t, cust.ValidUntil), 3)
+	if !until.Equal(want) {
+		t.Fatalf("berlaku sampai %s, mau %s (3 bulan yang dibeli)",
+			until.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+}
+
+func TestPlanDeleteRefusedWhileClaimPending(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	h, cookie := adminHandler(t, st)
+	cust := customerFromSeed(t, st, "taufiq")
+
+	if _, err := st.SavePlan(PlanInput{Code: "P24M", Label: "24 Bulan", Months: 24, Price: 800000}); err != nil {
+		t.Fatalf("SavePlan: %v", err)
+	}
+	if _, err := st.CreateClaim(cust.ID, "P24M"); err != nil {
+		t.Fatalf("CreateClaim: %v", err)
+	}
+
+	code, body := doJSON(t, h, cookie, "DELETE", "/api/v1/admin/plans/P24M", nil)
+	if code != http.StatusConflict {
+		t.Fatalf("status = %d, mau 409 (%v)", code, body)
+	}
+	if body["error"] != "in_use" {
+		t.Errorf("error = %v, mau in_use", body["error"])
+	}
+	msg, _ := body["message"].(string)
+	if !strings.Contains(msg, "diputus") {
+		t.Errorf("pesan %q harus menyebut pembayarannya harus diputus dulu", msg)
+	}
+	if _, err := st.PlanByCode("P24M"); err != nil {
+		t.Errorf("paket P24M terhapus padahal masih menunggu klaim: %v", err)
+	}
+}
+
+func TestPlanDeleteRefusedForLastPlan(t *testing.T) {
+	st := openTestStore(t)
+	if _, err := st.SavePlan(PlanInput{Code: "A1", Label: "Paket A", Months: 1, Price: 10000}); err != nil {
+		t.Fatalf("SavePlan A1: %v", err)
+	}
+	if _, err := st.SavePlan(PlanInput{Code: "B1", Label: "Paket B", Months: 1, Price: 20000}); err != nil {
+		t.Fatalf("SavePlan B1: %v", err)
+	}
+
+	if err := st.DeletePlan("B1"); err != nil {
+		t.Fatalf("paket yang masih ada paket lain harus bisa dihapus: %v", err)
+	}
+	err := st.DeletePlan("A1")
+	if err == nil {
+		t.Fatal("paket terakhir yang dijual tidak boleh terhapus")
+	}
+	var inUse ErrInUse
+	if !errors.As(err, &inUse) {
+		t.Fatalf("galat = %v, mau ErrInUse", err)
+	}
+	if !strings.Contains(inUse.Msg, "satu paket") {
+		t.Errorf("pesan %q harus menjelaskan bahwa minimal harus ada satu paket", inUse.Msg)
+	}
+	if _, err := st.PlanByCode("A1"); err != nil {
+		t.Errorf("paket A1 ikut hilang: %v", err)
+	}
+}
+
+func TestPlanUsageCountsUnpaidCustomerUnderFallback(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+
+	// Pelanggan baru yang belum pernah membayar: masa berlakunya diberikan
+	// lewat tanggal, jadi tidak ada pembayaran yang disetujui.
+	var instID string
+	if err := st.db.QueryRow(`SELECT id FROM instances LIMIT 1`).Scan(&instID); err != nil {
+		t.Fatalf("baca instance: %v", err)
+	}
+	baru, err := st.CreateCustomer(NewCustomer{
+		Name:        "Baru",
+		Institution: "Baru.net",
+		SessionName: "baru",
+		InstanceID:  instID,
+		ValidUntil:  today().AddDate(0, 0, 30).Format("2006-01-02"),
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomer: %v", err)
+	}
+
+	usage, err := st.PlanUsage()
+	if err != nil {
+		t.Fatalf("PlanUsage: %v", err)
+	}
+	// Dua pelanggan contoh punya P1M yang disetujui; yang baru belum pernah
+	// membayar dan harus dihitung ke paket cadangan, P1M juga.
+	if usage["P1M"] != 3 {
+		t.Errorf("PlanUsage[P1M] = %d, mau 3 (termasuk pelanggan tanpa pembayaran)", usage["P1M"])
+	}
+	if n, ada := usage[""]; ada || n != 0 {
+		t.Errorf("PlanUsage[\"\"] = %d (ada = %v): pelanggan tanpa pembayaran tidak boleh punya kunci sendiri", n, ada)
+	}
+
+	// Paket cadangan harus sama dengan yang dipakai halaman admin.
+	srv := NewServer(Config{BaseURL: "http://portal.test"}, st)
+	if got := srv.lastPlanCode(baru.ID); got != "P1M" {
+		t.Errorf("lastPlanCode pelanggan tanpa pembayaran = %q, mau P1M", got)
+	}
+}
+
+func TestUniqueViolationDetection(t *testing.T) {
+	// modernc melaporkan bentrok PRIMARY KEY sebagai teks galat seperti ini:
+	// "constraint failed: UNIQUE constraint failed: plans.code (1555)".
+	if !isUniqueViolation(errors.New("constraint failed: UNIQUE constraint failed: plans.code (1555)")) {
+		t.Error("pelanggaran UNIQUE tidak terdeteksi")
+	}
+	if isUniqueViolation(nil) {
+		t.Error("galat kosong dianggap pelanggaran UNIQUE")
+	}
+	if isUniqueViolation(errors.New("disk I/O error")) {
+		t.Error("galat yang bukan pelanggaran UNIQUE ikut terdeteksi")
+	}
+}
+
+// TestApproveClaimLegacyWithoutMonths menjaga baris klaim dari basis data
+// sebelum migrasi v2: durasinya belum tersimpan (0), jadi penyetujuan masih
+// memakai durasi paket seperti semula.
+func TestApproveClaimLegacyWithoutMonths(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	cust := customerFromSeed(t, st, "taufiq")
+
+	// Klaim lama dibuat lewat basis data, bukan CreateClaim, supaya kolom
+	// months-nya tetap 0 seperti baris sebelum migrasi.
+	if _, err := st.db.Exec(
+		`INSERT INTO payments (id, customer_id, plan_code, amount, months, status, ref, created_at)
+		 VALUES ('p-lama', ?, 'P3M', 135000, 0, 'pending', 'NOC-LAMA', ?)`,
+		cust.ID, Now().Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert klaim lama: %v", err)
+	}
+
+	until, err := st.ApproveClaim("p-lama")
+	if err != nil {
+		t.Fatalf("ApproveClaim klaim lama: %v", err)
+	}
+	want := addMonths(mustDate(t, cust.ValidUntil), 3)
+	if !until.Equal(want) {
+		t.Fatalf("berlaku sampai %s, mau %s (durasi diambil dari paket P3M)",
+			until.Format("2006-01-02"), want.Format("2006-01-02"))
+	}
+}
+
+// TestCreateClaimUnknownPlan menjaga jawaban INSERT atomik: paket yang tidak
+// ada tetap menghasilkan ErrNotFound, bukan galat basis data mentah.
+func TestCreateClaimUnknownPlan(t *testing.T) {
+	st := openTestStore(t)
+	if err := st.Seed(); err != nil {
+		t.Fatalf("Seed: %v", err)
+	}
+	cust := customerFromSeed(t, st, "taufiq")
+
+	if _, err := st.CreateClaim(cust.ID, "TIDAK-ADA"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("galat = %v, mau ErrNotFound", err)
+	}
+	if n := countRows(t, st, `SELECT COUNT(*) FROM payments WHERE plan_code = 'TIDAK-ADA'`); n != 0 {
+		t.Errorf("klaim untuk paket yang tidak ada ikut tersimpan: %d baris", n)
 	}
 }

@@ -150,6 +150,24 @@ export function adminPlans() {
   return req('GET', '/admin/plans')
 }
 
+/** body: {code, label, months, price, note} */
+export function adminCreatePlan(body) {
+  return req('POST', '/admin/plans', body)
+}
+
+/** body: {label, months, price, note} — kode paket tidak ikut berubah. */
+export function adminUpdatePlan(code, body) {
+  return req('PATCH', `/admin/plans/${enc(code)}`, body)
+}
+
+/*
+ * Hapus paket. Jawabannya 204 tanpa body. Ditolak 409 "in_use" kalau paketnya
+ * masih dipakai pelanggan; kalimatnya ada di err.serverMessage.
+ */
+export function adminDeletePlan(code) {
+  return req('DELETE', `/admin/plans/${enc(code)}`)
+}
+
 export function adminInstances() {
   return req('GET', '/admin/instances')
 }
