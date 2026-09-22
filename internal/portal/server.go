@@ -76,7 +76,11 @@ func NewServer(cfg Config, store *Store) *Server {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		fmt.Fprintln(w, "ok")
 	})
+	// Gambar QRIS: alamatnya tetap /qris.png, tetapi berkasnya bisa berubah
+	// ekstensi mengikuti yang terakhir diunggah dari halaman admin.
 	s.mux.HandleFunc("GET /qris.png", s.handleQRISImage)
+	s.mux.HandleFunc("POST /api/v1/admin/qris", s.admin(s.handleQRISUpload))
+	s.mux.HandleFunc("DELETE /api/v1/admin/qris", s.admin(s.handleQRISDelete))
 	s.mux.HandleFunc("/", s.handleWeb)
 
 	return s
@@ -355,8 +359,8 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	imageURL := any(nil)
-	if fileExists(s.cfg.QRISImage) {
-		imageURL = "/qris.png"
+	if u := s.qrisURL(); u != "" {
+		imageURL = u
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -416,15 +420,6 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 
 	_ = s.store.LogEvent(fmt.Sprintf("%s mengirim klaim pembayaran %s.", cust.Institution, claim.Ref))
 	writeJSON(w, http.StatusOK, s.claimView(claim))
-}
-
-func (s *Server) handleQRISImage(w http.ResponseWriter, r *http.Request) {
-	if !fileExists(s.cfg.QRISImage) {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-store")
-	http.ServeFile(w, r, s.cfg.QRISImage)
 }
 
 func fileExists(p string) bool {
@@ -556,6 +551,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		"claims":    outClaims,
 		"customers": outCustomers,
 		"activity":  activity,
+		"qris_url":  s.qrisURL(),
 	})
 }
 

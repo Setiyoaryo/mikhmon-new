@@ -117,6 +117,12 @@ PORTAL_BASE_URL=https://control.nocify.id
 PORTAL_WA=6285139495106
 ```
 
+| Variabel | Isi |
+|---|---|
+| `PORTAL_ADMIN_PASSWORD` | sandi masuk halaman admin portal. Wajib - portal menolak jalan tanpa ini |
+| `PORTAL_BASE_URL` | **alamat publik portal**, lengkap dengan `https://`, tanpa garis miring di akhir. Inilah yang ditempel di depan tautan pembayaran pelanggan jadi `https://control.nocify.id/#/pay/NOC-...`, dan yang muncul di tombol WhatsApp. Jangan diisi `localhost` atau alamat dalam Docker |
+| `PORTAL_WA` | nomor WhatsApp yang dihubungi pelanggan, format internasional tanpa `+` |
+
 Lalu:
 
 ```bash
@@ -168,19 +174,50 @@ ini akan memperingatkan; ganti dulu namanya di **Settings** menjadi `hotspot`
 
 ### 11. DNS dan sertifikat
 
-Tambahkan A record `*.nocify.id` ke IP VPS. Traefik akan menerbitkan
-sertifikat per subdomain lewat HTTP-01.
+Di pengelola DNS `nocify.id`, tambahkan satu record:
 
-Let's Encrypt membatasi **50 sertifikat baru per domain per minggu** - jangan
-buka puluhan subdomain dalam sehari.
+| Kolom | Isi |
+|---|---|
+| Type | `A` |
+| Name / Host | `*` |
+| Value / Points to | IP VPS |
+| TTL | Automatic |
+
+Itu satu record untuk semua: berlaku untuk `control.nocify.id`, untuk
+`taufiq.nocify.id`, dan untuk subdomain pelanggan mana pun yang dibuat nanti.
+Record `taufiq` yang sudah ada boleh dibiarkan - record khusus selalu menang
+atas wildcard.
+
+Yang perlu diperhatikan:
+
+- Tanda `*` **tidak mencakup domain telanjang** `nocify.id` tanpa subdomain.
+  Kalau alamat itu juga mau dipakai, tambahkan record `A` terpisah dengan
+  Name `@`.
+- **Kalau DNS-nya di Cloudflare, pilih "DNS only" (awan abu-abu), jangan
+  "Proxied" (awan oranye).** Traefik menerbitkan sertifikat lewat HTTP-01 yang
+  harus sampai ke VPS Anda; proxy Cloudflare memutus itu. Selain itu proxy
+  wildcard baru tersedia di paket berbayar.
+- Wildcard DNS butuh beberapa menit sampai berlaku. Periksa dengan:
+
+```bash
+dig +short uji.nocify.id
+```
+
+Traefik menerbitkan sertifikat per subdomain lewat HTTP-01 begitu subdomain
+itu pertama kali dibuka. Let's Encrypt membatasi **50 sertifikat baru per
+domain per minggu** - jangan buka puluhan subdomain dalam sehari.
 
 ### 12. Gambar QRIS
+
+Buka **halaman admin portal → kartu Pembayaran QRIS → Unggah QRIS**, lalu
+pilih berkas PNG/JPG-nya (maksimal 2 MB). Halaman pembayaran pelanggan
+langsung memakainya.
+
+Kalau lebih suka lewat baris perintah:
 
 ```bash
 cp qris.png /opt/mikhmon-new/data/portal/qris.png
 ```
-
-Halaman pembayaran langsung memakainya.
 
 ### 13. Periksa akhir
 
