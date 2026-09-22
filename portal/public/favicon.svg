@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="NOCIFY">
-  <title>NOCIFY</title>
-  <!-- Tanda NOCIFY saja, untuk ikon tab peramban. -->
-  <g style="isolation:isolate">
-    <path fill="#7fbde9" d="M50 0 H100 L50 100 H0 Z" />
-    <path fill="#2b57b0" style="mix-blend-mode:multiply" d="M0 0 H50 L100 100 H50 Z" />
-  </g>
-</svg>
