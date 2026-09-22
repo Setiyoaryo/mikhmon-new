@@ -74,8 +74,38 @@ function mikhmon_instance_path() {
 }
 
 /** Lokasi file cache jawaban portal. */
+/*
+ * Tenant yang sedang dilayani permintaan ini.
+ *
+ * Di model hosted bersama, satu panel melayani banyak pelanggan dan portal
+ * membedakannya lewat nama tenant. Yang dipakai adalah subdomain
+ * (<nama>.nocify.id). Instalasi dedicated tidak punya subdomain, jadi
+ * tenant-nya kosong dan portal mencarikan sendiri pelanggannya.
+ */
+function mikhmon_heartbeat_tenant() {
+  if (!function_exists('mikhmon_tenant_session')) {
+    return '';
+  }
+  $tenant = mikhmon_tenant_session();
+  if ($tenant === '') {
+    return '';
+  }
+  return preg_replace('/[^a-z0-9-]/', '', strtolower($tenant));
+}
+
+/*
+ * Cache jawaban portal dipisah per tenant.
+ *
+ * Kalau semua pelanggan berbagi satu berkas cache, permintaan pelanggan A
+ * akan menimpa jawaban untuk pelanggan B - halaman B bisa menampilkan status
+ * langganan A. Karena itu berkasnya diberi nama tenant.
+ */
 function mikhmon_heartbeat_cache_path() {
-  return dirname(__FILE__) . '/heartbeat-cache.php';
+  $tenant = mikhmon_heartbeat_tenant();
+  if ($tenant === '') {
+    return dirname(__FILE__) . '/heartbeat-cache.php';
+  }
+  return dirname(__FILE__) . '/heartbeat-cache-' . $tenant . '.php';
 }
 
 /**
@@ -295,6 +325,10 @@ function mikhmon_heartbeat_refresh($force = false) {
     'token'       => $inst['token'],
     'version'     => mikhmon_heartbeat_version(),
   );
+  $tenant = mikhmon_heartbeat_tenant();
+  if ($tenant !== '') {
+    $payload['tenant'] = $tenant;
+  }
   $url = $inst['portal'] . '/api/v1/heartbeat';
 
   $response = mikhmon_heartbeat_http_post($url, $payload, 10);

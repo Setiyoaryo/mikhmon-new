@@ -29,7 +29,8 @@ data/
 # berisi token rahasia instalasi ini. Contohnya ada di instance.example.php.
 include/instance.php
 include/heartbeat-cache.php
-include/heartbeat-cache.php.*.tmp
+include/heartbeat-cache-*.php
+include/heartbeat-cache*.php.*.tmp
 
 # Portal (Svelte) - hasil build dan dependensi tidak ikut di-commit.
 # Jalankan: cd portal && npm install && npm run build
