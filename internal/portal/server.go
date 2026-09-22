@@ -205,6 +205,10 @@ type heartbeatReq struct {
 	InstanceID string `json:"instance_id"`
 	Token      string `json:"token"`
 	Version    string `json:"version"`
+	// Tenant adalah label subdomain pelanggan di deployment bersama, mis.
+	// "taufiq". Panel khusus yang hanya melayani satu pelanggan boleh
+	// mengosongkannya.
+	Tenant string `json:"tenant"`
 }
 
 // heartbeatResp adalah satu-satunya hal yang perlu diketahui panel pelanggan.
@@ -236,11 +240,37 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "bad_token")
 		return
 	}
-
-	cust, err := s.store.CustomerByID(inst.CustomerID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_error")
-		return
+	// Cari pelanggan yang dimaksud. Deployment bersama mengirim "tenant"
+	// (label subdomain), deployment khusus yang cuma melayani satu pelanggan
+	// boleh tidak mengirim apa pun.
+	tenant := strings.TrimSpace(req.Tenant)
+	var cust Customer
+	if tenant != "" {
+		cust, err = s.store.CustomerBySession(inst.ID, tenant)
+		if errors.Is(err, ErrNotFound) {
+			writeErr(w, http.StatusNotFound, "unknown_tenant")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "store_error")
+			return
+		}
+	} else {
+		hosted, herr := s.store.CustomersByInstance(inst.ID)
+		if herr != nil {
+			writeErr(w, http.StatusInternalServerError, "store_error")
+			return
+		}
+		switch {
+		case len(hosted) == 0:
+			writeErr(w, http.StatusNotFound, "unknown_instance")
+			return
+		case len(hosted) > 1:
+			// Deployment bersama tapi panelnya tidak menyebut pelanggan mana.
+			writeErr(w, http.StatusBadRequest, "tenant_required")
+			return
+		}
+		cust = hosted[0]
 	}
 	_ = s.store.TouchInstance(inst.ID, req.Version)
 
@@ -307,7 +337,7 @@ func (s *Server) handlePay(w http.ResponseWriter, r *http.Request) {
 		plans = []Plan{}
 	}
 
-	inst, _ := s.store.FirstInstance(cust.ID)
+	inst, _ := s.store.InstanceByCustomer(cust.ID)
 
 	var pending any
 	if c, err := s.store.PendingClaim(cust.ID); err == nil {
@@ -439,6 +469,7 @@ type adminCustomer struct {
 	Name        string `json:"name"`
 	Institution string `json:"institution"`
 	InstanceID  string `json:"instance_id"`
+	SessionName string `json:"session_name"`
 	PlanCode    string `json:"plan_code"`
 	PlanLabel   string `json:"plan_label"`
 	DaysLeft    int    `json:"days_left"`
@@ -483,9 +514,10 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 	active, warning, expired := 0, 0, 0
 	for _, c := range customers {
 		sub := s.subscription(c)
-		inst, _ := s.store.FirstInstance(c.ID)
+		inst, _ := s.store.InstanceByID(c.InstanceID)
 		row := adminCustomer{
-			ID: c.ID, Name: c.Name, Institution: c.Institution, InstanceID: inst.ID,
+			ID: c.ID, Name: c.Name, Institution: c.Institution,
+			InstanceID: c.InstanceID, SessionName: c.SessionName,
 			PlanCode: sub.PlanCode, PlanLabel: sub.PlanLabel, DaysLeft: sub.DaysLeft,
 			PayURL: strings.TrimRight(s.cfg.BaseURL, "/") + "/#/pay/" + c.PayToken,
 			Status: sub.State, WA: c.WA, LastSeen: humanAgo(inst.LastSeen),

@@ -21,6 +21,8 @@
 include_once(dirname(__FILE__) . '/subscription.php');
 /* Subdomain -> sesi router. Dipakai untuk menyembunyikan pemilih sesi. */
 include_once(dirname(__FILE__) . '/tenant.php');
+/* Daftar sesi router (satu berkas per pelanggan, tanpa memuat kredensial). */
+include_once(dirname(__FILE__) . '/sessions.php');
 session_start();
 // hide all error
 error_reporting(0);
@@ -278,15 +280,11 @@ include('./info.php');
   <select class="connect optfa ses text-right mr-t-10 pd-5">
     <option id="MikhmonSession" value="<?= $session; ?>"><?= $hotspotname; ?></option>
       <?php
-      foreach (file('./include/config.php') as $line) {
-        $sesname = explode("'", $line)[1];
-        if ($sesname == "" || $sesname== "mikhmon") {
+      foreach (mikhmon_session_names() as $sesname) {
+        if ($sesname == $session) {
+          echo '<option value="' . $sesname . '">' . $sesname . ' &#x2666;</option>';
         } else {
-        if($sesname == $session){
-          echo '<option value="' . $sesname. '">'.$sesname. ' &#x2666;</option>';
-        }else{
-          echo '<option value="' . $sesname. '">'.$sesname. '</option>';
-        }
+          echo '<option value="' . $sesname . '">' . $sesname . '</option>';
         }
       }
       ?>

@@ -81,7 +81,7 @@ if ($id == "login" || ($id == "" && substr($url, -1) == "p")) {
   if (isset($_POST['login'])) {
     $user = $_POST['user'];
     $pass = $_POST['pass'];
-    if ($user == $useradm && $pass == decrypt($passadm)) {
+    if ($user == $useradm && $pass == decrypt($passadm, 128)) {
       $_SESSION["mikhmon"] = $user;
 
         echo "<script>window.location='./admin.php?id=sessions'</script>";
@@ -154,15 +154,9 @@ if ($id == "login" || ($id == "" && substr($url, -1) == "p")) {
   include_once('./process/shutdown.php');
 } elseif ($id == "remove-session" && $session != "") {
   include_once('./include/menu.php');
-  $fc = file("./include/config.php" );
-  $f = fopen("./include/config.php", "w");
-  $q = "'";
-  $rem = '$data['.$q.$session.$q.']';
-  foreach ($fc as $line) {
-    if (!strstr($line, $rem))
-      fputs($f, $line);
-  }
-  fclose($f);
+  // Sesi disimpan satu berkas per pelanggan; hapus hanya sesi ini.
+  include_once('./include/sessions.php');
+  mikhmon_session_delete($session);
   echo "<script>window.location='./admin.php?id=sessions'</script>";
 } elseif ($id == "subscription") {
   include_once('./include/menu.php');

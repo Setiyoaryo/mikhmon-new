@@ -18,6 +18,8 @@
 
 // hide all error
 error_reporting(0);
+/* Daftar sesi router: satu berkas per pelanggan (include/sessions/<nama>.php). */
+include_once(dirname(__FILE__) . '/../include/sessions.php');
 if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
@@ -34,7 +36,9 @@ if (!isset($_SESSION["mikhmon"])) {
     if ($suseradm === '') {
       $suseradm = $useradm; // never store a nameless admin
     }
-    $spassadm = encrypt(is_string($_POST['passadm']) ? $_POST['passadm'] : '');
+    // Akun admin bersifat global, bukan milik satu sesi router, jadi selalu
+    // pakai kunci lama (128) - bukan kunci sesi yang kebetulan ada di URL.
+    $spassadm = encrypt(is_string($_POST['passadm']) ? $_POST['passadm'] : '', 128);
 
     // quickbt.php holds $qrbt inside a DOUBLE-quoted string, so only the
     // enable/disable values the select offers are allowed through.
@@ -93,10 +97,22 @@ if (!isset($_SESSION["mikhmon"])) {
             <div class="card-body">
             <div class="row">
               <?php
-              foreach (file('./include/config.php') as $line) {
-                $value = explode("'", $line)[1];
-                if ($value == "" || $value == "mikhmon") {
-                } else { ?>
+              // Satu pelanggan hanya boleh melihat sesinya sendiri, jadi saat
+              // halaman ini diminta dari subdomain pelanggan kredensial
+              // pelanggan lain tidak ikut dibaca.
+              if (function_exists('mikhmon_tenant_locked') && mikhmon_tenant_locked() && isset($session) && $session !== '') {
+                $routerlist = array($session);
+              } else {
+                $routerlist = mikhmon_session_names();
+              }
+              foreach ($routerlist as $value) {
+                if (!mikhmon_session_load($value)) {
+                  continue;
+                }
+                $vfield = isset($data[$value][4]) ? (string) $data[$value][4] : '';
+                $vparts = explode('%', $vfield);
+                $vhotspot = isset($vparts[1]) ? $vparts[1] : $value;
+              ?>
                     <div class="col-12">
                         <div class="box bmh-75 box-bordered <?= $color[rand(1, 11)]; ?>">
                                 <div class="box-group">
@@ -109,12 +125,12 @@ if (!isset($_SESSION["mikhmon"])) {
                                 
                                   <div class="box-group-area">
                                     <span>
-                                      <?= $_hotspot_name ?> : <?= explode('%', $data[$value][4])[1]; ?><br>
+                                      <?= $_hotspot_name ?> : <?= $vhotspot; ?><br>
                                       <?= $_session_name ?> : <?= $value; ?><br>
                                       <span class="connect pointer"  id="<?= $value; ?>"><i class="fa fa-external-link"></i> <?= $_open ?></span>&nbsp;
                                       <a href="./admin.php?id=settings&session=<?= $value; ?>"><i class="fa fa-edit"></i> <?= $_edit ?></a>&nbsp;
                                       <a href="javascript:void(0)" onclick="if(confirm('Are you sure to delete data <?= $value;
-                                      echo " (" . explode('%', $data[$value][4])[1] . ")"; ?>?')){loadpage('./admin.php?id=remove-session&session=<?= $value; ?>')}else{}"><i class="fa fa-remove"></i> <?= $_delete ?></a>
+                                      echo " (" . $vhotspot . ")"; ?>?')){loadpage('./admin.php?id=remove-session&session=<?= $value; ?>')}else{}"><i class="fa fa-remove"></i> <?= $_delete ?></a>
                                     </span>
 
                                   </div>
@@ -123,9 +139,8 @@ if (!isset($_SESSION["mikhmon"])) {
                             </div>
                           </div>
               <?php
-            }
-          }
-          ?>
+              }
+              ?>
               </div>
             </div>
           </div>
@@ -146,7 +161,7 @@ if (!isset($_SESSION["mikhmon"])) {
           <td>
           <div class="input-group">
           <div class="input-group-11 col-box-10">
-                <input class="group-item group-item-l" id="passadm" type="password" size="10" name="passadm" title="Password Admin" value="<?= decrypt($passadm); ?>" required="1"/>
+                <input class="group-item group-item-l" id="passadm" type="password" size="10" name="passadm" title="Password Admin" value="<?= decrypt($passadm, 128); ?>" required="1"/>
               </div>
                 <div class="input-group-1 col-box-2">
                   <div class="group-item group-item-r pd-2p5 text-center align-middle">

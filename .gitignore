@@ -36,3 +36,14 @@ include/heartbeat-cache.php.*.tmp
 portal/node_modules/
 portal/dist/
 *.jar
+
+# Sesi router per pelanggan: satu berkas = kredensial satu router, jadi
+# isinya jangan ikut di-commit. Direktorinya dibuat otomatis oleh aplikasi
+# (dan oleh tools/mikhmon-migrate-sessions.php).
+include/sessions/*.php
+include/sessions/*.php.bak
+include/config.php.bak
+
+# Kunci enkripsi per sesi. Contoh bentuknya ada di include/tenantkey.example.php.
+include/tenantkey.php
+include/tenantkey.php.bak

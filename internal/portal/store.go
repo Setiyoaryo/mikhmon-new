@@ -72,29 +72,96 @@ func OpenStore(path string) (*Store, error) {
 // Close menutup basis data.
 func (s *Store) Close() error { return s.db.Close() }
 
+// schemaVersion adalah versi skema yang disimpan di PRAGMA user_version.
+// Angka ini dinaikkan setiap kali bentuk tabel berubah, supaya basis data lama
+// bisa ditingkatkan di tempat tanpa kehilangan baris.
+const schemaVersion = 1
+
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`
+	var v int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v >= schemaVersion {
+		return nil
+	}
+	// Baru ada satu langkah: versi 0 (satu instance = satu pelanggan) ke
+	// versi 1 (satu instance boleh melayani banyak pelanggan).
+	return s.migrateToV1()
+}
+
+// migrateToV1 mengubah model lama menjadi model pemasangan bersama.
+//
+// Seluruh perubahan, termasuk penanda user_version, dijalankan dalam satu
+// transaksi. Kalau prosesnya mati di tengah, basis datanya kembali ke keadaan
+// semula. Menjalankannya dua kali juga aman: pemanggilan kedua melihat versi
+// sudah 1 dan langsung kembali.
+func (s *Store) migrateToV1() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	hasInstances, err := tableExists(tx, "instances")
+	if err != nil {
+		return err
+	}
+	legacy := false
+	if hasInstances {
+		// Kolom instances.customer_id hanya ada di model lama.
+		if legacy, err = columnExists(tx, "instances", "customer_id"); err != nil {
+			return err
+		}
+	}
+
+	for _, ddl := range []string{customersDDL, plansDDL, paymentsDDL, eventsDDL} {
+		if _, err := tx.Exec(ddl); err != nil {
+			return err
+		}
+	}
+	// Tabel customers yang sudah ada tidak diubah oleh CREATE TABLE IF NOT
+	// EXISTS, jadi dua kolom baru ditambahkan sendiri.
+	if err := addColumn(tx, "customers", "instance_id", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := addColumn(tx, "customers", "session_name", `TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+
+	switch {
+	case legacy:
+		if err := migrateLegacyInstances(tx); err != nil {
+			return err
+		}
+	case !hasInstances:
+		if _, err := tx.Exec(instancesDDL("instances")); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+const customersDDL = `
 CREATE TABLE IF NOT EXISTS customers (
-  id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
-  institution TEXT NOT NULL,
-  wa          TEXT NOT NULL DEFAULT '',
-  pay_token   TEXT NOT NULL UNIQUE,
-  valid_from  TEXT NOT NULL DEFAULT '',
-  valid_until TEXT NOT NULL DEFAULT '',
-  suspended   INTEGER NOT NULL DEFAULT 0,
-  created_at  TEXT NOT NULL
-);
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  institution  TEXT NOT NULL,
+  wa           TEXT NOT NULL DEFAULT '',
+  pay_token    TEXT NOT NULL UNIQUE,
+  valid_from   TEXT NOT NULL DEFAULT '',
+  valid_until  TEXT NOT NULL DEFAULT '',
+  suspended    INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  instance_id  TEXT NOT NULL DEFAULT '',
+  session_name TEXT NOT NULL DEFAULT ''
+);`
 
-CREATE TABLE IF NOT EXISTS instances (
-  id          TEXT PRIMARY KEY,
-  token       TEXT NOT NULL,
-  customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-  router_name TEXT NOT NULL DEFAULT '',
-  version     TEXT NOT NULL DEFAULT '',
-  last_seen   TEXT NOT NULL DEFAULT ''
-);
-
+const plansDDL = `
 CREATE TABLE IF NOT EXISTS plans (
   code   TEXT PRIMARY KEY,
   label  TEXT NOT NULL,
@@ -103,8 +170,9 @@ CREATE TABLE IF NOT EXISTS plans (
   note   TEXT NOT NULL DEFAULT '',
   sort   INTEGER NOT NULL DEFAULT 0,
   sale   INTEGER NOT NULL DEFAULT 1
-);
+);`
 
+const paymentsDDL = `
 CREATE TABLE IF NOT EXISTS payments (
   id          TEXT PRIMARY KEY,
   customer_id TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
@@ -114,14 +182,133 @@ CREATE TABLE IF NOT EXISTS payments (
   ref         TEXT NOT NULL,
   created_at  TEXT NOT NULL,
   decided_at  TEXT NOT NULL DEFAULT ''
-);
+);`
 
+const eventsDDL = `
 CREATE TABLE IF NOT EXISTS events (
   id   INTEGER PRIMARY KEY AUTOINCREMENT,
   at   TEXT NOT NULL,
   text TEXT NOT NULL
-);
-`)
+);`
+
+// instancesDDL mengembalikan DDL tabel instances. Nama tabelnya bisa diganti
+// supaya migrasi bisa menyiapkan tabel pengganti lebih dulu.
+//
+// kind: 'shared' = satu VPS melayani banyak pelanggan, 'dedicated' = satu VPS
+// hanya untuk satu pelanggan.
+func instancesDDL(table string) string {
+	return fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS %s (
+  id          TEXT PRIMARY KEY,
+  token       TEXT NOT NULL,
+  name        TEXT NOT NULL DEFAULT '',
+  kind        TEXT NOT NULL DEFAULT 'shared' CHECK (kind IN ('shared', 'dedicated')),
+  router_name TEXT NOT NULL DEFAULT '',
+  version     TEXT NOT NULL DEFAULT '',
+  last_seen   TEXT NOT NULL DEFAULT ''
+);`, table)
+}
+
+// migrateLegacyInstances memindahkan instances.customer_id (satu instance satu
+// pelanggan) ke customers.instance_id (satu instance banyak pelanggan).
+//
+// Baris instance lama dipertahankan apa adanya sebagai deployment
+// kind='dedicated': id, token, router_name, version, dan last_seen disalin.
+// Kolom name diisi institution pelanggan (atau namanya, atau id instance).
+// session_name belum ada di data lama, jadi diturunkan dari institution
+// pelanggan lewat sessionName ("Taufiq.net" menjadi "taufiq").
+func migrateLegacyInstances(tx *sql.Tx) error {
+	if _, err := tx.Exec(`UPDATE customers SET instance_id = COALESCE(
+		(SELECT i.id FROM instances i WHERE i.customer_id = customers.id), '')`); err != nil {
+		return err
+	}
+
+	// session_name dihitung di Go karena butuh normalisasi teks.
+	type tenantName struct{ id, name string }
+	var sessions []tenantName
+	rows, err := tx.Query(`SELECT id, institution, pay_token FROM customers`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id, institution, payToken string
+		if err := rows.Scan(&id, &institution, &payToken); err != nil {
+			rows.Close()
+			return err
+		}
+		sessions = append(sessions, tenantName{id, sessionName(institution, payToken)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	if _, err := tx.Exec(instancesDDL("instances_new")); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO instances_new (id, token, name, kind, router_name, version, last_seen)
+		SELECT i.id, i.token,
+		       COALESCE(NULLIF(TRIM(c.institution), ''), NULLIF(TRIM(c.name), ''), i.id),
+		       'dedicated', i.router_name, i.version, i.last_seen
+		  FROM instances i LEFT JOIN customers c ON c.id = i.customer_id`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE instances`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE instances_new RENAME TO instances`); err != nil {
+		return err
+	}
+
+	for _, tn := range sessions {
+		if _, err := tx.Exec(`UPDATE customers SET session_name = ? WHERE id = ?`, tn.name, tn.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// tableExists memeriksa apakah sebuah tabel sudah ada.
+func tableExists(tx *sql.Tx, name string) (bool, error) {
+	var n int
+	err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// columnExists memeriksa apakah sebuah kolom sudah ada di sebuah tabel.
+func columnExists(tx *sql.Tx, table, column string) (bool, error) {
+	rows, err := tx.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notNull, pk int
+			name, typ        string
+			dflt             any
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
+// addColumn menambahkan kolom ke sebuah tabel kalau belum ada.
+func addColumn(tx *sql.Tx, table, column, definition string) error {
+	ok, err := columnExists(tx, table, column)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	_, err = tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
 	return err
 }
 
@@ -147,14 +334,18 @@ type Customer struct {
 	ValidUntil  string
 	Suspended   bool
 	CreatedAt   string
+	InstanceID  string // deployment yang menghosting pelanggan ini
+	SessionName string // label sesi/subdomain di deployment itu, mis. "taufiq"
 	PlanCode    string // paket terakhir yang dibayar
 }
 
-// Instance adalah satu pemasangan panel Mikhmon milik pelanggan.
+// Instance adalah satu pemasangan (deployment) panel Mikhmon di satu VPS.
+// Satu deployment bisa melayani banyak pelanggan kalau kind='shared'.
 type Instance struct {
 	ID         string
 	Token      string
-	CustomerID string
+	Name       string
+	Kind       string // "shared" atau "dedicated"
 	RouterName string
 	Version    string
 	LastSeen   string
@@ -218,7 +409,7 @@ func (s *Store) scanCustomer(row interface{ Scan(...any) error }) (Customer, err
 	var c Customer
 	var sus int
 	err := row.Scan(&c.ID, &c.Name, &c.Institution, &c.WA, &c.PayToken,
-		&c.ValidFrom, &c.ValidUntil, &sus, &c.CreatedAt)
+		&c.ValidFrom, &c.ValidUntil, &sus, &c.CreatedAt, &c.InstanceID, &c.SessionName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -226,7 +417,7 @@ func (s *Store) scanCustomer(row interface{ Scan(...any) error }) (Customer, err
 	return c, err
 }
 
-const customerCols = `id, name, institution, wa, pay_token, valid_from, valid_until, suspended, created_at`
+const customerCols = `id, name, institution, wa, pay_token, valid_from, valid_until, suspended, created_at, instance_id, session_name`
 
 // CustomerByPayToken mencari pelanggan dari token halaman pembayarannya.
 func (s *Store) CustomerByPayToken(token string) (Customer, error) {
@@ -238,6 +429,36 @@ func (s *Store) CustomerByPayToken(token string) (Customer, error) {
 func (s *Store) CustomerByID(id string) (Customer, error) {
 	return s.scanCustomer(s.db.QueryRow(
 		`SELECT `+customerCols+` FROM customers WHERE id = ?`, id))
+}
+
+// CustomerBySession mencari pelanggan dari deployment yang menghostingnya dan
+// label sesinya (subdomain). Inilah cara panel bersama memilih pelanggan.
+func (s *Store) CustomerBySession(instanceID, sessionName string) (Customer, error) {
+	return s.scanCustomer(s.db.QueryRow(
+		`SELECT `+customerCols+` FROM customers
+		 WHERE instance_id = ? AND session_name = ? ORDER BY created_at, id LIMIT 1`,
+		instanceID, sessionName))
+}
+
+// CustomersByInstance mengembalikan semua pelanggan yang dihosting satu
+// deployment, terurut supaya hasilnya tidak berubah-ubah.
+func (s *Store) CustomersByInstance(instanceID string) ([]Customer, error) {
+	rows, err := s.db.Query(
+		`SELECT `+customerCols+` FROM customers WHERE instance_id = ? ORDER BY session_name, id`, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Customer
+	for rows.Next() {
+		c, err := s.scanCustomer(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // AllCustomers mengembalikan semua pelanggan, terurut dari yang paling mendesak.
@@ -278,25 +499,26 @@ func (s *Store) SetSuspended(id string, suspended bool) error {
 
 /* -------------------------------------------------------------- instances */
 
-// InstanceByID mengambil instance beserta token-nya (untuk heartbeat).
+// InstanceByID mengambil deployment beserta token-nya (untuk heartbeat).
 func (s *Store) InstanceByID(id string) (Instance, error) {
 	var i Instance
 	err := s.db.QueryRow(
-		`SELECT id, token, customer_id, router_name, version, last_seen FROM instances WHERE id = ?`, id,
-	).Scan(&i.ID, &i.Token, &i.CustomerID, &i.RouterName, &i.Version, &i.LastSeen)
+		`SELECT id, token, name, kind, router_name, version, last_seen FROM instances WHERE id = ?`, id,
+	).Scan(&i.ID, &i.Token, &i.Name, &i.Kind, &i.RouterName, &i.Version, &i.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return i, ErrNotFound
 	}
 	return i, err
 }
 
-// FirstInstance mengambil instance milik pelanggan (satu pelanggan satu instance).
-func (s *Store) FirstInstance(customerID string) (Instance, error) {
+// InstanceByCustomer mengambil deployment yang menghosting seorang pelanggan.
+func (s *Store) InstanceByCustomer(customerID string) (Instance, error) {
 	var i Instance
 	err := s.db.QueryRow(
-		`SELECT id, token, customer_id, router_name, version, last_seen FROM instances
-		 WHERE customer_id = ? ORDER BY rowid LIMIT 1`, customerID,
-	).Scan(&i.ID, &i.Token, &i.CustomerID, &i.RouterName, &i.Version, &i.LastSeen)
+		`SELECT i.id, i.token, i.name, i.kind, i.router_name, i.version, i.last_seen
+		   FROM instances i JOIN customers c ON c.instance_id = i.id
+		  WHERE c.id = ?`, customerID,
+	).Scan(&i.ID, &i.Token, &i.Name, &i.Kind, &i.RouterName, &i.Version, &i.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return i, ErrNotFound
 	}
@@ -508,8 +730,9 @@ func (s *Store) RecentEvents(limit int) ([]Event, error) {
 
 /* ------------------------------------------------------------------ seed */
 
-// Seed mengisi paket bawaan dan, kalau basis datanya masih kosong, satu
-// pelanggan contoh supaya portalnya bisa langsung dicoba.
+// Seed mengisi paket bawaan dan, kalau basis datanya masih kosong, contoh
+// pemasangan bersama: satu panel dengan dua pelanggan, satu langganannya sehat
+// dan satu sudah berakhir, supaya kedua keadaan itu langsung kelihatan.
 func (s *Store) Seed() error {
 	var planCount int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM plans`).Scan(&planCount); err != nil {
@@ -539,39 +762,51 @@ func (s *Store) Seed() error {
 		return nil
 	}
 
-	// Pelanggan contoh ini yang Anda pakai untuk mencoba sendiri: hotspot
-	// taufiq.nocify.id. Tanggalnya diisi 4 hari lagi supaya keadaan "segera
-	// berakhir" langsung kelihatan.
-	id := "c" + randHex(6)
-	custID := id
-	until := today().AddDate(0, 0, 4).Format("2006-01-02")
-	from := today().AddDate(0, 0, -26).Format("2006-01-02")
+	// Beginilah pemasangan bersama: satu panel VPS melayani dua pelanggan
+	// dengan subdomain berbeda, jadi tidak perlu satu instance per pelanggan.
+	instID := strings.ToUpper(randHex(6))
 	if _, err := s.db.Exec(
-		`INSERT INTO customers (id, name, institution, wa, pay_token, valid_from, valid_until, suspended, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		custID, "Taufiq", "Taufiq.net", "6285139495106",
-		"NOC-"+strings.ToUpper(randHex(2))+"-"+strings.ToUpper(randHex(2)),
-		from, until, Now().Format(time.RFC3339)); err != nil {
+		`INSERT INTO instances (id, token, name, kind, router_name, version, last_seen)
+		 VALUES (?, ?, ?, 'shared', ?, '', '')`,
+		instID, randHex(16), "Panel NOCIFY", "CHR-HOTSPOT"); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(
-		`INSERT INTO instances (id, token, customer_id, router_name, version, last_seen)
-		 VALUES (?, ?, ?, ?, ?, '')`,
-		strings.ToUpper(randHex(6)), randHex(16), custID, "CHR-HOTSPOT", ""); err != nil {
-		return err
+
+	// taufiq.nocify.id langganannya sehat (masih 26 hari), hendra.nocify.id
+	// sudah lewat 10 hari supaya keadaan "berakhir" ikut terlihat.
+	type demo struct {
+		name, institution, wa, session string
+		from, until                    time.Time
 	}
-	// Pembayaran pertama yang sudah disetujui, supaya catatannya utuh: tanpa ini
-	// pelanggan punya tanggal berlaku tetapi tidak punya paket yang bisa dibaca.
-	paid := Now().AddDate(0, 0, -26).Format(time.RFC3339)
-	if _, err := s.db.Exec(
-		`INSERT INTO payments (id, customer_id, plan_code, amount, status, ref, created_at, decided_at)
-		 VALUES (?, ?, 'P1M', 50000, 'approved', ?, ?, ?)`,
-		"p"+randHex(6), custID,
-		"NOC-"+strings.ToUpper(randHex(2))+"-"+strings.ToUpper(randHex(2)),
-		paid, paid); err != nil {
-		return err
+	demos := []demo{
+		{"Taufiq", "Taufiq.net", "6285139495106", "taufiq", today().AddDate(0, 0, -4), today().AddDate(0, 0, 26)},
+		{"Hendra", "Hendra.net", "6281234567890", "hendra", today().AddDate(0, 0, -40), today().AddDate(0, 0, -10)},
 	}
-	return s.LogEvent("Portal disiapkan. Pelanggan contoh dibuat untuk uji coba.")
+	for _, d := range demos {
+		custID := "c" + randHex(6)
+		if _, err := s.db.Exec(
+			`INSERT INTO customers (id, name, institution, wa, pay_token, valid_from, valid_until, suspended, created_at, instance_id, session_name)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+			custID, d.name, d.institution, d.wa,
+			"NOC-"+strings.ToUpper(randHex(2))+"-"+strings.ToUpper(randHex(2)),
+			d.from.Format("2006-01-02"), d.until.Format("2006-01-02"),
+			Now().Format(time.RFC3339), instID, d.session); err != nil {
+			return err
+		}
+		// Pembayaran pertama yang sudah disetujui, supaya catatannya utuh: tanpa
+		// ini pelanggan punya tanggal berlaku tetapi tidak punya paket yang bisa
+		// dibaca.
+		paid := Now().AddDate(0, 0, -26).Format(time.RFC3339)
+		if _, err := s.db.Exec(
+			`INSERT INTO payments (id, customer_id, plan_code, amount, status, ref, created_at, decided_at)
+			 VALUES (?, ?, 'P1M', 50000, 'approved', ?, ?, ?)`,
+			"p"+randHex(6), custID,
+			"NOC-"+strings.ToUpper(randHex(2))+"-"+strings.ToUpper(randHex(2)),
+			paid, paid); err != nil {
+			return err
+		}
+	}
+	return s.LogEvent("Portal disiapkan. Satu panel contoh berisi dua pelanggan (satu aktif, satu berakhir).")
 }
 
 /* ------------------------------------------------------------------ util */
@@ -598,4 +833,44 @@ func addMonths(t time.Time, months int) time.Time {
 		d = last
 	}
 	return time.Date(y, m, d, 0, 0, 0, 0, loc)
+}
+
+// sessionName menurunkan label sesi/subdomain dari data pelanggan. Sumber
+// pertama institution, karena institution biasanya sudah berupa nama domain
+// pelanggan: "Taufiq.net" menjadi "taufiq". Kalau institution kosong atau tidak
+// menyisakan huruf/angka, pay_token yang dipakai, dan sebagai jalan terakhir
+// dipakai "customer".
+func sessionName(institution, payToken string) string {
+	if v := slugLabel(institution); v != "" {
+		return v
+	}
+	if v := slugLabel(payToken); v != "" {
+		return v
+	}
+	return "customer"
+}
+
+// slugLabel membersihkan teks menjadi label yang aman dipakai sebagai nama
+// subdomain: huruf kecil, hanya huruf/angka/tanda hubung. Bagian setelah titik
+// pertama dibuang, jadi "taufiq.nocify.id" menjadi "taufiq".
+func slugLabel(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		s = s[:i]
+	}
+	var b strings.Builder
+	dash := false
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		case r == '-' || r == '_' || r == ' ':
+			if !dash && b.Len() > 0 {
+				b.WriteByte('-')
+				dash = true
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "-")
 }

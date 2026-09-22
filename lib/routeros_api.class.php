@@ -933,31 +933,174 @@ function mikhmon_bulk_remove_by_query($API, $query = array(), $options = array()
     return $response;
 }
 // encrypt decript
+//
+// Password router tidak boleh bisa dibaca oleh instalasi lain. Kalau sesi yang
+// sedang dipakai punya kunci sendiri (include/tenantkey.php), nilai baru
+// disimpan dengan AES-256-CBC + HMAC dan penanda "v2:". Kalau sesi itu belum
+// punya kunci, algoritma lama (kunci 128) tetap dipakai supaya instalasi yang
+// belum diberi kunci tidak rusak. Nilai lama tanpa penanda "v2:" selalu
+// dibaca dengan algoritma lama.
+
+if (!defined('MIKHMON_LEGACY_KEY')) {
+  define('MIKHMON_LEGACY_KEY', '128');
+}
+
+// random_bytes() ada sejak PHP 7; cadangan uniqid/mt_rand untuk PHP lama.
+if (!function_exists('mikhmon_crypto_random')) {
+function mikhmon_crypto_random($length) {
+  $length = (int) $length;
+  if ($length < 1) {
+    return '';
+  }
+  if (function_exists('random_bytes')) {
+    try {
+      $bytes = random_bytes($length);
+      if (is_string($bytes) && strlen($bytes) >= $length) {
+        return substr($bytes, 0, $length);
+      }
+    } catch (Exception $e) {
+      // jatuh ke cadangan di bawah
+    }
+  }
+  $out = '';
+  while (strlen($out) < $length) {
+    $out .= sha1(uniqid((string) mt_rand(), true), true) . pack('N', mt_rand());
+  }
+  return substr($out, 0, $length);
+}
+}
+
+// Cadangan kalau ekstensi openssl tidak ada: stream kunci dari hash_hmac.
+if (!function_exists('mikhmon_crypto_stream_xor')) {
+function mikhmon_crypto_stream_xor($data, $rawkey, $iv) {
+  $out = '';
+  $len = strlen($data);
+  $block = 0;
+  for ($i = 0; $i < $len; $i += 32) {
+    $keystream = hash_hmac('sha256', $iv . pack('N', $block), $rawkey, true);
+    $out .= substr($data, $i, 32) ^ $keystream;
+    $block++;
+  }
+  return $out;
+}
+}
+
+// Format v2: "v2:" + base64(mode + iv + ciphertext + hmac). Satu byte mode
+// menandai cipher yang dipakai supaya nilai tetap terbaca di server yang
+// ekstensi openssl-nya berbeda.
+if (!function_exists('mikhmon_crypto_v2_encrypt')) {
+function mikhmon_crypto_v2_encrypt($plain, $key) {
+  $plain = (string) $plain;
+  if ($plain === '') {
+    return '';
+  }
+  if (!function_exists('hash') || !function_exists('hash_hmac')) {
+    return false;
+  }
+  $rawkey = hash('sha256', (string) $key, true);
+  $iv = mikhmon_crypto_random(16);
+  if (strlen($iv) !== 16) {
+    return false;
+  }
+
+  $cipher = false;
+  $mode = 'a';
+  if (function_exists('openssl_encrypt')) {
+    $cipher = @openssl_encrypt($plain, 'aes-256-cbc', $rawkey, OPENSSL_RAW_DATA, $iv);
+  }
+  if ($cipher === false || $cipher === null) {
+    $cipher = mikhmon_crypto_stream_xor($plain, $rawkey, $iv);
+    $mode = 's';
+  }
+  $mac = hash_hmac('sha256', $iv . $cipher, $rawkey, true);
+  return 'v2:' . base64_encode($mode . $iv . $cipher . $mac);
+}
+}
+
+// Balikannya string, atau false kalau kunci/HMAC-nya tidak cocok.
+if (!function_exists('mikhmon_crypto_v2_decrypt')) {
+function mikhmon_crypto_v2_decrypt($string, $key) {
+  if (!function_exists('hash') || !function_exists('hash_hmac')) {
+    return false;
+  }
+  $blob = base64_decode(substr((string) $string, 3), true);
+  if (!is_string($blob) || strlen($blob) < 49) {
+    return false;
+  }
+  $mac = substr($blob, -32);
+  $body = substr($blob, 0, -32);
+  $mode = substr($body, 0, 1);
+  $iv = substr($body, 1, 16);
+  $cipher = substr($body, 17);
+  $rawkey = hash('sha256', (string) $key, true);
+  $calc = hash_hmac('sha256', $iv . $cipher, $rawkey, true);
+  if (!function_exists('hash_equals') || !hash_equals($calc, $mac)) {
+    return false;
+  }
+  if ($mode === 'a' && function_exists('openssl_decrypt')) {
+    $plain = @openssl_decrypt($cipher, 'aes-256-cbc', $rawkey, OPENSSL_RAW_DATA, $iv);
+    if ($plain !== false && $plain !== null) {
+      return $plain;
+    }
+  }
+  return mikhmon_crypto_stream_xor($cipher, $rawkey, $iv);
+}
+}
 
 if (!function_exists('encrypt')) {
-function encrypt($string, $key=128) {
-	$result = '';
-	for($i=0, $k= strlen($string); $i<$k; $i++) {
-		$char = substr($string, $i, 1);
-		$keychar = substr($key, ($i % strlen($key))-1, 1);
-		$char = chr(ord($char)+ord($keychar));
-		$result .= $char;
-	}
-	return base64_encode($result);
+function encrypt($string, $key=null) {
+  $string = (string) $string;
+  if ($key === null) {
+    $key = function_exists('mikhmon_session_current_key') ? mikhmon_session_current_key() : '';
+    if ($key === '') {
+      $key = MIKHMON_LEGACY_KEY;
+    }
+  }
+  if ((string) $key !== MIKHMON_LEGACY_KEY) {
+    $v2 = mikhmon_crypto_v2_encrypt($string, (string) $key);
+    if ($v2 !== false) {
+      return $v2;
+    }
+  }
+  $key = (string) $key;
+  $result = '';
+  for($i=0, $k= strlen($string); $i<$k; $i++) {
+    $char = substr($string, $i, 1);
+    $keychar = substr($key, ($i % strlen($key))-1, 1);
+    $char = chr(ord($char)+ord($keychar));
+    $result .= $char;
+  }
+  return base64_encode($result);
 }
 }
 
 if (!function_exists('decrypt')) {
-function decrypt($string, $key=128) {
-	$result = '';
-	$string = base64_decode($string);
-	for($i=0, $k=strlen($string); $i< $k ; $i++) {
-		$char = substr($string, $i, 1);
-		$keychar = substr($key, ($i % strlen($key))-1, 1);
-		$char = chr(ord($char)-ord($keychar));
-		$result .= $char;
-	}
-	return $result;
+function decrypt($string, $key=null) {
+  $string = (string) $string;
+  if (substr($string, 0, 3) === 'v2:') {
+    if ($key === null) {
+      $key = function_exists('mikhmon_session_current_key') ? mikhmon_session_current_key() : '';
+      if ($key === '') {
+        $key = MIKHMON_LEGACY_KEY;
+      }
+    }
+    $plain = mikhmon_crypto_v2_decrypt($string, (string) $key);
+    return ($plain === false) ? '' : $plain;
+  }
+  // Nilai lama tanpa penanda v2: tetap algoritma lama dengan kunci lama.
+  if ($key === null) {
+    $key = MIKHMON_LEGACY_KEY;
+  }
+  $key = (string) $key;
+  $result = '';
+  $string = base64_decode($string);
+  for($i=0, $k=strlen($string); $i< $k ; $i++) {
+    $char = substr($string, $i, 1);
+    $keychar = substr($key, ($i % strlen($key))-1, 1);
+    $char = chr(ord($char)-ord($keychar));
+    $result .= $char;
+  }
+  return $result;
 }
 }
 
