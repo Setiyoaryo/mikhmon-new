@@ -36,6 +36,24 @@ ter-render, bukan sekadar dikecilkan. Halaman itu bukan bagian dari portal.
 Hasil build: sekitar **26 kB gzip** seluruhnya (HTML + CSS + JS), plus Font Awesome
 yang disalin ke `public/font-awesome/` supaya tidak bergantung pada CDN.
 
+### Menjalankan backendnya
+
+```bash
+go build -o /tmp/mikhmon-portal ./cmd/mikhmon-portal
+
+MIKHMON_PORTAL_ADMIN_PASSWORD=rahasia \
+MIKHMON_PORTAL_WEB_DIR="$PWD/portal/dist" \
+MIKHMON_PORTAL_DB=/tmp/portal.db \
+  /tmp/mikhmon-portal
+```
+
+Default-nya mendengarkan di `:8090`. Buka `http://127.0.0.1:8090/#/admin` dan
+masuk memakai kata sandi itu. Pelanggan contoh dibuat otomatis; tautan
+pembayarannya ada di `pay_url` pada `GET /api/v1/admin/overview`.
+
+Di produksi keduanya dibangun jadi satu image lewat `Dockerfile.portal`, dan
+antarmuka Svelte-nya di-embed ke dalam binary Go — tidak perlu nginx terpisah.
+
 ## Kenapa portal terpisah
 
 Apa pun yang berjalan di server pelanggan ada di tangan pelanggan: gambar QRIS,
@@ -93,25 +111,44 @@ serta catatan aktivitas.
 Bart "Mockup" di bawah hanya ada di mockup, untuk berpindah halaman dan mencoba
 tiga keadaan langganan (aktif / mau habis / habis).
 
-## Bentuk data yang diasumsikan
+## Bentuk datanya
+
+SQLite, dibuat otomatis di `data/portal/portal.db` saat pertama dijalankan.
 
 ```sql
-customers  id, name, institution, wa, created_at
-instances  id (12 hex), token, customer_id, router_name, last_seen, version
-plans      code, label, months, price
-payments   id, customer_id, plan_code, amount, status, created_at, approved_at
-ledger     catatan perubahan status (audit)
+customers  id, name, institution, wa, pay_token, valid_from, valid_until,
+           suspended, created_at
+instances  id (12 hex), token, customer_id, router_name, version, last_seen
+plans      code, label, months, price, note, sort, sale
+payments   id, customer_id, plan_code, amount, status, ref, created_at, decided_at
+events     catatan aktivitas (audit sederhana)
 ```
 
-Rancangan endpoint:
+Endpoint yang sudah jalan (semuanya di bawah `/api/v1`):
 
 ```
-POST /api/v1/heartbeat   panel → portal   {instance_id, token, version}
-                                          → {state, expires, pay_url, message}
-GET  /pay/<token>        pelanggan        status + QRIS + tombol klaim
-POST /api/v1/claim       pelanggan        "saya sudah bayar"
-GET  /api/v1/admin/...   admin            kelola pelanggan & pembayaran
+POST /heartbeat                          panel → portal
+     {instance_id, token, version}
+     → {state, plan, expires_at, days_left, pay_url, message, server_time}
+     401 bad_token / 404 unknown_instance
+
+GET  /pay/{token}                        pelanggan
+     → {customer, instance, subscription, plans, qris, wa_number, pending_claim}
+POST /pay/{token}/claim                  {plan_code} → klaim baru
+     409 already_pending (membawa klaim yang sedang menunggu)
+
+POST /admin/login      {password} → 204 + cookie
+POST /admin/logout     → 204
+GET  /admin/me         → {user}
+GET  /admin/overview   → {stats, claims, customers, activity}
+POST /admin/claims/{id}/approve        → memperpanjang langganan
+POST /admin/claims/{id}/reject
+POST /admin/customers/{id}/suspend     → panel jadi expired
+POST /admin/customers/{id}/activate
 ```
+
+Perpanjangan ditambahkan dari tanggal berakhir yang masih tersisa, bukan dari
+hari ini, jadi pelanggan yang bayar lebih awal tidak kehilangan sisa waktunya.
 
 ## Pembayaran
 
@@ -126,9 +163,12 @@ dan bisa ditambah kolom referensi eksternal tanpa mengubah yang lain.
 
 ## Yang belum
 
-- Backend Go + SQLite (`cmd/mikhmon-portal`)
-- Login admin
-- Panel pelanggan: klien heartbeat dan halaman Langganan read-only
+- Klien heartbeat di panel Mikhmon: halaman Langganan read-only yang memanggil
+  `/api/v1/heartbeat` dan menyimpan jawabannya untuk pemakaian offline
+- Subdomain per pelanggan (`<nama>.nocify.id`) di Traefik, plus pemetaan
+  subdomain ke sesi router
+- Unggah gambar QRIS dari halaman admin (sekarang ditaruh manual sebagai
+  `data/portal/qris.png`)
 - Menghapus `tools/mikhmon-keygen.php` dan lisensi HMAC yang lama
 
 ## Batasan yang tetap ada

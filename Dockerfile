@@ -4,7 +4,8 @@
 # Built here only; the PHP frontend is served by Dockerfile.php.
 
 # ---------- Stage 1: build ----------
-FROM golang:1.22-alpine AS builder
+# modernc.org/sqlite (dipakai portal) butuh Go 1.25 ke atas.
+FROM golang:1.25-alpine AS builder
 
 WORKDIR /src
 

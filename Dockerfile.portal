@@ -1,0 +1,54 @@
+# syntax=docker/dockerfile:1
+#
+# mikhmon-portal — portal langganan NOCIFY Billing.
+# Go + SQLite (modernc, tanpa cgo) + antarmuka Svelte yang di-embed ke binary.
+#
+#   docker compose -f docker-compose.vps.yml up -d --build mikhmon-portal
+
+# ---------- Stage 1: antarmuka Svelte ----------
+FROM node:22-alpine AS web
+
+WORKDIR /web
+COPY portal/package.json portal/package-lock.json ./
+RUN npm ci
+COPY portal/ ./
+RUN npm run build
+
+# ---------- Stage 2: binary Go ----------
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /src
+
+# Modul dulu supaya lapisannya bisa dipakai ulang saat hanya kode yang berubah.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Hasil build frontend ditaruh di folder yang di-embed Go (//go:embed all:web).
+RUN rm -rf internal/portal/web && mkdir -p internal/portal/web
+COPY --from=web /web/dist/ ./internal/portal/web/
+
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    -o /out/mikhmon-portal ./cmd/mikhmon-portal
+
+# ---------- Stage 3: runtime ----------
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -S portal \
+    && adduser -S -G portal -h /home/portal portal \
+    && mkdir -p /data && chown portal:portal /data
+
+COPY --from=builder /out/mikhmon-portal /usr/local/bin/mikhmon-portal
+RUN chmod 0755 /usr/local/bin/mikhmon-portal
+
+USER portal
+
+EXPOSE 8090
+VOLUME ["/data"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1:8090/healthz || exit 1
+
+ENTRYPOINT ["/usr/local/bin/mikhmon-portal"]

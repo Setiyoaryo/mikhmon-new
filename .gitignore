@@ -21,7 +21,9 @@ include/license.php
 include/license.php.*.tmp
 include/license-secret.php
 *.tmp
-*.tmp
+
+# Data portal langganan: basis data SQLite, kunci sesi, dan gambar QRIS.
+data/
 
 # Portal (Svelte) - hasil build dan dependensi tidak ikut di-commit.
 # Jalankan: cd portal && npm install && npm run build

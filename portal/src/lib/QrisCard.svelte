@@ -6,7 +6,14 @@
    * diunggah admin. Untuk mockup, polanya digambar di sini supaya tidak perlu
    * file gambar dan tetap terlihat seperti QRIS asli.
    */
-  let { amount = 0, merchant = 'SETIYO ARYO WINATA, DIGITAL & KREATIF', nmid = 'ID1026599320839' } = $props()
+  let {
+    amount = 0,
+    merchant = 'SETIYO ARYO WINATA, DIGITAL & KREATIF',
+    nmid = 'ID1026599320839',
+    imageUrl = null
+  } = $props()
+
+  let hasImage = $derived(typeof imageUrl === 'string' && imageUrl.length > 0)
 
   const N = 25
 
@@ -52,18 +59,26 @@
     <div class="nmid">NMID: {nmid}</div>
 
     <div class="code">
-      <svg viewBox="0 0 {N * 10} {N * 10}" width="215" height="215" role="img" aria-label="Contoh kode QRIS">
-        <rect width={N * 10} height={N * 10} fill="#fff" />
-        {#each cells as c (c.x + '-' + c.y)}
-          {#if c.on}
-            <rect x={c.x * 10} y={c.y * 10} width="10" height="10" fill="#111" />
-          {/if}
-        {/each}
-        {#each finders as f (f.x + ':' + f.y)}
-          <rect x={(f.x + 0.5) * 10} y={(f.y + 0.5) * 10} width="60" height="60" fill="none" stroke="#111" stroke-width="10" />
-          <rect x={(f.x + 2) * 10} y={(f.y + 2) * 10} width="30" height="30" fill="#111" />
-        {/each}
-      </svg>
+      {#if hasImage}
+        <img
+          src={imageUrl}
+          alt="Kode QRIS merchant"
+          style="width:215px;max-width:100%;height:auto;display:block"
+        />
+      {:else}
+        <svg viewBox="0 0 {N * 10} {N * 10}" width="215" height="215" role="img" aria-label="Contoh kode QRIS">
+          <rect width={N * 10} height={N * 10} fill="#fff" />
+          {#each cells as c (c.x + '-' + c.y)}
+            {#if c.on}
+              <rect x={c.x * 10} y={c.y * 10} width="10" height="10" fill="#111" />
+            {/if}
+          {/each}
+          {#each finders as f (f.x + ':' + f.y)}
+            <rect x={(f.x + 0.5) * 10} y={(f.y + 0.5) * 10} width="60" height="60" fill="none" stroke="#111" stroke-width="10" />
+            <rect x={(f.x + 2) * 10} y={(f.y + 2) * 10} width="30" height="30" fill="#111" />
+          {/each}
+        </svg>
+      {/if}
     </div>
 
     {#if amount > 0}

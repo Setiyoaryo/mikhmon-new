@@ -1,0 +1,18 @@
+# Jangan kirim ini ke daemon Docker: bikin konteks build membengkak dan
+# memperlambat build, terutama untuk portal yang punya node_modules.
+
+.git
+.gitignore
+
+# Frontend
+portal/node_modules
+portal/dist
+
+# Data portal (basis data + QRIS). Jangan pernah ikut ke dalam image.
+data
+
+# Sampah build
+*.log
+*.tmp
+.env
+docker-compose.override.yml
