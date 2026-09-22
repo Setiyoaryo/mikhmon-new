@@ -105,18 +105,31 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
   unset($_SESSION['mikhmon_generate_hasil']);
   $gh_qty = isset($gh['added']) ? (int) $gh['added'] : 0;
   $gh_gagal = isset($gh['failed']) ? (int) $gh['failed'] : 0;
+  /* Kunci batch: komentar yang sama dipakai halaman cetak untuk mengenali batch
+   * ini, jadi tombol cetak di bawah selalu mencetak batch yang baru dibuat. */
+  $gh_kunci = isset($gh['comment']) ? (string) $gh['comment'] : '';
   ?>
 <div class="card-body pd-b-0">
   <div class="box success">
     <b><?= number_format($gh_qty, 0, ",", "."); ?></b> voucher created for profile
     <b><?= htmlspecialchars(isset($gh['profile']) ? $gh['profile'] : '', ENT_QUOTES); ?></b>
-    &middot; batch <span class="mono"><?= htmlspecialchars(isset($gh['comment']) ? $gh['comment'] : '', ENT_QUOTES); ?></span>
+    &middot; batch <span class="mono"><?= htmlspecialchars($gh_kunci, ENT_QUOTES); ?></span>
     <?php if ($gh_gagal > 0) { ?>
     &middot; <span class="cl-danger"><?= $gh_gagal; ?> failed</span>
     <?php } ?>
     <br>
-    All <b><?= number_format($gh_qty, 0, ",", "."); ?></b> of them are listed below.
-    The <b>Print</b> buttons above print this whole batch.
+    <span class="tiny">All of them are listed below - nothing else is mixed in.</span>
+    <div class="pd-t-5">
+      <a class="btn bg-primary" target="_blank" title="Print <?= $gh_qty; ?> vouchers"
+         href="./voucher/print.php?id=<?= urlencode($gh_kunci); ?>&qr=no&session=<?= $session; ?>">
+        <i class="fa fa-print"></i> <?= $_print; ?> <?= number_format($gh_qty, 0, ",", "."); ?></a>
+      <a class="btn bg-danger" target="_blank" title="Print <?= $gh_qty; ?> vouchers with QR"
+         href="./voucher/print.php?id=<?= urlencode($gh_kunci); ?>&qr=yes&session=<?= $session; ?>">
+        <i class="fa fa-qrcode"></i> <?= $_print_qr; ?> <?= number_format($gh_qty, 0, ",", "."); ?></a>
+      <a class="btn bg-info" target="_blank" title="Print <?= $gh_qty; ?> small vouchers"
+         href="./voucher/print.php?id=<?= urlencode($gh_kunci); ?>&small=yes&session=<?= $session; ?>">
+        <i class="fa fa-print"></i> <?= $_print_small; ?> <?= number_format($gh_qty, 0, ",", "."); ?></a>
+    </div>
   </div>
 </div>
   <?php
