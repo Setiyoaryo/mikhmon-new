@@ -49,7 +49,7 @@ if (!defined('MIKHMON_LICENSE_SECRET')) {
 
 /* QRIS merchant yang ditampilkan di halaman pembayaran. */
 if (!defined('MIKHMON_QRIS_MERCHANT')) {
-  define('MIKHMON_QRIS_MERCHANT', 'SETIYO ARYO WINATA, DIGITAL & KREATIF');
+  define('MIKHMON_QRIS_MERCHANT', 'NOCIFY, SOFTWARE');
 }
 if (!defined('MIKHMON_QRIS_NMID')) {
   define('MIKHMON_QRIS_NMID', 'ID1026599320839');

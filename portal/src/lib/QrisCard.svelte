@@ -8,7 +8,7 @@
    */
   let {
     amount = 0,
-    merchant = 'SETIYO ARYO WINATA, DIGITAL & KREATIF',
+    merchant = 'NOCIFY, SOFTWARE',
     nmid = 'ID1026599320839',
     imageUrl = null
   } = $props()

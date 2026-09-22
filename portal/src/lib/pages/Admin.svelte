@@ -142,7 +142,7 @@
 
 <div class="topbar">
   <div class="brand">
-    <span class="mark">N</span> NOCIFY
+    <img src="./logo-nocify-on-dark.svg" alt="NOCIFY" class="logo" />
     <span class="sub">Billing Mikhmon</span>
   </div>
   <div class="grow"></div>

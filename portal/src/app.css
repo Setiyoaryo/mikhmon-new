@@ -133,19 +133,17 @@ h3 {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  gap: 10px;
 }
-.brand .mark {
-  background: var(--primary);
-  color: #fff;
-  border-radius: var(--radius);
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
-  font-size: 14px;
+.brand .logo {
+  display: block;
+  height: 24px;
+  width: auto;
+}
+@media (max-width: 520px) {
+  .brand .logo {
+    height: 20px;
+  }
 }
 .brand .sub {
   font-weight: 400;

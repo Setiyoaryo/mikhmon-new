@@ -105,7 +105,7 @@ func main() {
 		WebDir:       env("MIKHMON_PORTAL_WEB_DIR", ""),
 		BaseURL:      env("MIKHMON_PORTAL_BASE_URL", "http://localhost:8090"),
 		QRISImage:    env("MIKHMON_PORTAL_QRIS_IMAGE", "./data/qris.png"),
-		QRISMerchant: env("MIKHMON_PORTAL_QRIS_MERCHANT", "SETIYO ARYO WINATA, DIGITAL & KREATIF"),
+		QRISMerchant: env("MIKHMON_PORTAL_QRIS_MERCHANT", "NOCIFY, SOFTWARE"),
 		QRISNMID:     env("MIKHMON_PORTAL_QRIS_NMID", "ID1026599320839"),
 		WANumber:     env("MIKHMON_PORTAL_WA", "6285139495106"),
 		Auth: portal.NewAuth(
