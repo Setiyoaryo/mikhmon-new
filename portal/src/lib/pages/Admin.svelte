@@ -2,6 +2,7 @@
   import Login from './Login.svelte'
   import FormPelanggan from '../admin/FormPelanggan.svelte'
   import PanelDeploy from '../admin/PanelDeploy.svelte'
+  import QrisPembayaran from '../admin/QrisPembayaran.svelte'
   import { salinTeks } from '../clipboard.js'
   import {
     adminOverview,
@@ -583,6 +584,14 @@
       onpanelbaru={panelBaru}
       on401={sesiHabis}
       onmuatulang={muatReferensi}
+    />
+
+    <!-- ---------------------------------------------------- pembayaran qris -- -->
+    <QrisPembayaran
+      qrisUrl={data.qris_url || ''}
+      onpesan={(m) => (flash = m)}
+      onmuatulang={refresh}
+      on401={sesiHabis}
     />
 
     <!-- -------------------------------------------------------- aktivitas -- -->

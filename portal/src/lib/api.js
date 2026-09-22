@@ -35,6 +35,15 @@ async function req(method, path, body) {
     throw fail('Tidak dapat menghubungi server.', 0, 'network')
   }
 
+  return bacaJawaban(res)
+}
+
+/*
+ * Membaca jawaban server dan mengubah galat HTTP jadi Error yang seragam.
+ * Dipisah dari req() supaya unggahan berkas multipart memakai bentuk yang
+ * sama.
+ */
+async function bacaJawaban(res) {
   if (res.status === 204) return null
 
   let data = null
@@ -95,6 +104,34 @@ export function adminLogout() {
 
 export function adminOverview() {
   return req('GET', '/admin/overview')
+}
+
+/*
+ * Unggah gambar QRIS. Ini panggilan multipart, bukan JSON: req() selalu
+ * mengirim Content-Type: application/json, sedangkan di sini header itu harus
+ * dibiarkan kosong supaya browser menuliskan boundary multipart-nya sendiri.
+ */
+export async function adminUploadQRIS(file) {
+  const fd = new FormData()
+  fd.append('file', file)
+
+  let res
+  try {
+    res = await fetch(BASE + '/admin/qris', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+      body: fd
+    })
+  } catch {
+    throw fail('Tidak dapat menghubungi server.', 0, 'network')
+  }
+
+  return bacaJawaban(res)
+}
+
+export function adminDeleteQRIS() {
+  return req('DELETE', '/admin/qris')
 }
 
 /** action: "approve" | "reject" */
