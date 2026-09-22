@@ -209,8 +209,15 @@
   }
 
   async function hapus(r) {
+    /*
+     * ID panelnya ikut disebut: dua pelanggan boleh punya nama usaha dan nama
+     * sesi yang sama persis (mis. sisa data contoh di panel sebelah), jadi
+     * tanpa ID panel dialog ini tidak cukup untuk tahu baris mana yang akan
+     * terhapus.
+     */
     const lanjut = confirm(
-      `Hapus pelanggan ${r.institution} (sesi ${r.session_name})? Tautan pembayarannya ikut hilang dan tidak bisa dikembalikan.`
+      `Hapus pelanggan ${r.institution} (sesi ${r.session_name}, panel ${prettyId(r.instance_id)})? ` +
+        'Tautan pembayarannya ikut hilang dan tidak bisa dikembalikan.'
     )
     if (!lanjut) return
 
