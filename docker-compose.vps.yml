@@ -28,21 +28,36 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=proxy"
-      # Panel melayani SEMUA subdomain: tiap pelanggan dapat <nama>.nocify.id,
-      # dan sesi routernya ditentukan dari subdomain (include/tenant.php).
-      # Prioritasnya lebih rendah daripada portal supaya control.nocify.id
-      # tetap masuk ke portal dan bukan ke panel.
-      - "traefik.http.routers.mikhmon.rule=HostRegexp(`{sub:[a-z0-9-]+}.nocify.id`)"
+      # Panel melayani subdomain pelanggan: tiap pelanggan dapat
+      # <nama>.nocify.id, dan sesi routernya ditentukan dari subdomain
+      # (include/tenant.php).
+      #
+      # Router "mikhmon" sengaja memakai nama eksplisit, dan wildcard-nya
+      # ditaruh di router TERPISAH ("mikhmon-tenant"). Kalau sintaks wildcard
+      # tidak cocok dengan versi Traefik di VPS ini, Traefik hanya menolak
+      # router wildcard-nya saja - panel utama tetap hidup.
+      - "traefik.http.routers.mikhmon.rule=Host(`taufiq.nocify.id`)"
       - "traefik.http.routers.mikhmon.priority=10"
       - "traefik.http.routers.mikhmon.entrypoints=websecure"
       - "traefik.http.routers.mikhmon.tls.certresolver=letsencrypt"
       - "traefik.http.routers.mikhmon.service=mikhmon"
       - "traefik.http.services.mikhmon.loadbalancer.server.port=80"
-      # HTTP -> HTTPS redirect router
-      - "traefik.http.routers.mikhmon-web.rule=HostRegexp(`{sub:[a-z0-9-]+}.nocify.id`)"
+      # Semua subdomain lain. Pelanggan baru TIDAK perlu ditambahkan ke berkas
+      # ini - cukup dibikin di portal, dan <nama>.nocify.id langsung jalan.
+      - "traefik.http.routers.mikhmon-tenant.rule=HostRegexp(`{sub:[a-z0-9-]+}.nocify.id`)"
+      - "traefik.http.routers.mikhmon-tenant.priority=5"
+      - "traefik.http.routers.mikhmon-tenant.entrypoints=websecure"
+      - "traefik.http.routers.mikhmon-tenant.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mikhmon-tenant.service=mikhmon"
+      # HTTP -> HTTPS redirect. Dua router juga, alasannya sama seperti di atas.
+      - "traefik.http.routers.mikhmon-web.rule=Host(`taufiq.nocify.id`)"
       - "traefik.http.routers.mikhmon-web.priority=10"
       - "traefik.http.routers.mikhmon-web.entrypoints=web"
       - "traefik.http.routers.mikhmon-web.middlewares=mikhmon-redirect"
+      - "traefik.http.routers.mikhmon-tenant-web.rule=HostRegexp(`{sub:[a-z0-9-]+}.nocify.id`)"
+      - "traefik.http.routers.mikhmon-tenant-web.priority=5"
+      - "traefik.http.routers.mikhmon-tenant-web.entrypoints=web"
+      - "traefik.http.routers.mikhmon-tenant-web.middlewares=mikhmon-redirect"
       - "traefik.http.middlewares.mikhmon-redirect.redirectscheme.scheme=https"
       - "traefik.http.middlewares.mikhmon-redirect.redirectscheme.permanent=true"
 
