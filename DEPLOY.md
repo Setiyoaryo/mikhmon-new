@@ -107,6 +107,39 @@ yang benar (bukan kosong), dan **Hotspot → User List** harus menampilkan data
 dari router. Kalau password tampil kosong, kembalikan
 `include/sessions/<nama>.php.bak` lalu periksa lagi.
 
+### 6b. Samakan nama sesi dengan subdomain
+
+Ini langkah yang mudah terlewat, dan akibatnya panel tidak bisa dipakai.
+Subdomain menentukan sesi mana yang dibuka, dan subdomain selalu huruf kecil:
+
+| Panel dibuka di | Sesi harus bernama |
+|---|---|
+| `taufiq.nocify.id` | `taufiq` |
+| `hotspot.nocify.id` | `hotspot` |
+
+Jadi sesi bernama `HOTSPOT` tidak akan pernah cocok. Halaman login memang
+masih terbuka, tapi begitu masuk dan membuka halaman hotspot, panelnya tidak
+menemukan data routernya.
+
+Lihat nama sesi yang ada:
+
+```bash
+cd /opt/mikhmon-new && ls include/sessions/*.php | grep -v bak
+```
+
+Kalau namanya belum sama dengan subdomain, ganti dengan alat ini (kunci
+enkripsinya ikut pindah, jadi password router tetap terbaca):
+
+```bash
+docker exec mikhmon-php php tools/mikhmon-rename-session.php HOTSPOT taufiq
+```
+
+Alatnya memeriksa sendiri hasilnya: kalau ada bidang yang bergeser, berkas
+barunya dibuang lagi dan berkas lama dibiarkan utuh.
+
+Setelah itu buka `taufiq.nocify.id` **dan periksa Hotspot → User List masih
+menampilkan data dari router**. Jangan lanjut sebelum ini benar.
+
 ### 7. Naikkan portal
 
 Siapkan `.env` di `/opt/mikhmon-new`:
