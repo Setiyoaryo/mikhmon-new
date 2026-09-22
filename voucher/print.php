@@ -194,15 +194,20 @@ table.voucher {
   $num = $i + 1;
   ?>
 <?php
+/* Template diambil lewat include/vouchertemplate.php: hasil suntingan dari
+ * halaman Template Editor (data/templates/) kalau ada, kalau tidak yang bawaan
+ * di folder ini. */
+include_once(dirname(__FILE__) . '/../include/vouchertemplate.php');
 if ($userp != "") {
-  include('./template-thermal.php');
+  include(mikhmon_voucher_template_path('template-thermal'));
 } else {
   if ($small == "yes") {
-    include('./template-small.php');
+    include(mikhmon_voucher_template_path('template-small'));
   } else {
-    include('./template.php');
+    include(mikhmon_voucher_template_path('template'));
   }
 }
+?>
 ?>
 <?php 
 } ?>

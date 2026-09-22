@@ -29,6 +29,10 @@ if (!isset($_SESSION["mikhmon"])) {
 include('../include/config.php');
 include('../include/readcfg.php');
 
+/* Di mana hasil suntingan template disimpan - di luar git, supaya "git pull"
+ * tidak menimpanya. Lihat include/vouchertemplate.php. */
+include_once(dirname(__FILE__) . '/../include/vouchertemplate.php');
+
 
 
 $url = $_SERVER['REQUEST_URI'];
@@ -47,21 +51,22 @@ if ($telplate == "default" || $telplate == "rdefault") {
 	$popupQR = "javascript:window.open('./voucher/vpreview.php?usermode=up&small=yes&qr=yes&session=" . $session . "','_blank','width=310,height=310')";
 }
 if (isset($_POST['save'])) {
-	$template = './voucher/' . $telplatet . '.php';
-	$handle = fopen($template, 'w') or die('Cannot open file:  ' . $template);
-
-	$data = ($_POST['editor']);
-
-	fwrite($handle, $data);
-		
-		//header("Location:$url");
+	/*
+	 * Disimpan ke data/templates/, bukan ke voucher/ - berkas di voucher/ ada
+	 * di dalam git, jadi menyimpan ke situ berarti template yang sudah
+	 * disesuaikan akan kembali ke bawaan pada "git pull" berikutnya.
+	 */
+	$tersimpan = mikhmon_voucher_template_save($telplatet, isset($_POST['editor']) ? $_POST['editor'] : '');
+	if (!$tersimpan) {
+		$galat_simpan = 'Template tidak tersimpan. Isinya kosong, atau folder data/templates tidak bisa ditulis.';
+	}
 }
 
 }
 ?>
 <!-- Create a simple CodeMirror instance -->
-<link rel="stylesheet" href="./css/editor.min.css">
-<script src="./js/editor.min.js"></script>	
+<link rel="stylesheet" href="./css/editor.min.css?t=<?= @filemtime('./css/editor.min.css'); ?>">
+<script src="./js/editor.min.js?t=<?= @filemtime('./js/editor.min.js'); ?>"></script>
 
 <style>
 .CodeMirror {
@@ -82,6 +87,9 @@ textarea{
 						<h3><i class="fa fa-edit"></i> <?= $_template_editor ?></h3>
 					</div>
 			<div class="card-body">
+				<?php if (isset($galat_simpan)) { ?>
+				<div class="box danger"><?= $galat_simpan; ?></div>
+				<?php } ?>
 				<form autocomplete="off" method="post" action="">
 					<table class="table">
 						<tr>
@@ -124,19 +132,21 @@ textarea{
 						</tr>
 						</table>
 	        	<textarea class="bg-dark" id="editorMikhmon" name="editor" style="width:100%" height="700">
-						<?php if ($telplate == "default") {
-						echo file_get_contents('./voucher/template.php');
-					} elseif ($telplate == "thermal") {
-						echo file_get_contents('./voucher/template-thermal.php');
-					} elseif ($telplate == "small") {
-						echo file_get_contents('./voucher/template-small.php');
-					} elseif ($telplate == "rdefault") {
-						echo file_get_contents('./voucher/default.php');
+					<?php
+					/* Dua yang pertama (default/thermal/small) adalah template yang
+					 * bisa disunting: pakai hasil suntingan kalau ada. Tiga sisanya
+					 * (rdefault/rthermal/rsmall) adalah sumber "Reset", yang memang
+					 * selalu diambil dari berkas bawaan di voucher/. */
+					if ($telplate == "rdefault") {
+						echo @file_get_contents('./voucher/default.php');
 					} elseif ($telplate == "rthermal") {
-						echo file_get_contents('./voucher/default-thermal.php');
+						echo @file_get_contents('./voucher/default-thermal.php');
 					} elseif ($telplate == "rsmall") {
-						echo file_get_contents('./voucher/default-small.php');
-					} ?>
+						echo @file_get_contents('./voucher/default-small.php');
+					} else {
+						echo mikhmon_voucher_template_read($telplatet);
+					}
+					?>
 	        </textarea>
 			</form>
 			</div>
