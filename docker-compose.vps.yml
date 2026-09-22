@@ -20,6 +20,10 @@ services:
       # Alamat portal langganan. Panel membacanya dari sini lalu mendaftarkan
       # dirinya sendiri - tidak ada berkas yang perlu diisi tangan di VPS ini.
       MIKHMON_PORTAL_URL: "${PORTAL_BASE_URL:-https://control.nocify.id}"
+      # Berapa detik daftar user hotspot boleh dipakai ulang sebelum diambil
+      # lagi dari router (lihat include/hscache.php). Setel di .env kalau
+      # daftarnya terlalu sering terasa lambat. 0 = selalu ambil dari router.
+      MIKHMON_HSCACHE_TTL: "${HSCACHE_TTL:-300}"
     depends_on:
       - mikhmon-api
     networks:
