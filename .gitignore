@@ -22,3 +22,8 @@ include/license.php.*.tmp
 include/license-secret.php
 *.tmp
 *.tmp
+
+# Portal (Svelte) - hasil build dan dependensi tidak ikut di-commit.
+# Jalankan: cd portal && npm install && npm run build
+portal/node_modules/
+portal/dist/

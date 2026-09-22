@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Pratinjau mockup &mdash; NOCIFY Billing</title>
+    <style>
+      :root { --line: #4a535c; --primary: #20a8d8; --text: #f3f4f5; --muted: #73818f; }
+
+      html, body {
+        margin: 0;
+        background: #1b1f23;
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      }
+
+      .bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--line);
+        position: sticky;
+        top: 0;
+        background: #1b1f23;
+        z-index: 5;
+        font-size: 12px;
+      }
+      .bar .tag {
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 0 5px;
+        white-space: nowrap;
+      }
+      .bar button {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: var(--text);
+        border-radius: 14px;
+        padding: 4px 11px;
+        font: inherit;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .bar button.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+      .stage { padding: 10px; }
+
+      /* Portalnya dirancang untuk layar lebar, sedangkan panel pratinjau di sini
+         sempit. Jadi isinya digambar pada lebar sungguhan lalu diperkecil dengan
+         transform - layout desktop-nya benar-benar ter-render, hanya tampil
+         mengecil, dan tidak ada gulir mendatar. */
+      .clipper { overflow: hidden; border-radius: 6px; }
+      .scaler { transform-origin: top left; }
+      iframe { display: block; border: 0; background: #2f353a; }
+    </style>
+  </head>
+  <body>
+    <!--
+      Halaman bantu untuk meninjau mockup. Bukan bagian dari portal.
+      Pilih halaman dan lebar, isinya diperkecil supaya muat di panel ini.
+    -->
+    <div class="bar">
+      <span class="tag">Halaman</span>
+      <button data-route="/pay/NOC-8F3A-2C71">Pelanggan</button>
+      <button data-route="/admin">Admin</button>
+      <span class="tag" style="margin-left: 8px">Lebar</span>
+      <button data-w="1280">1280</button>
+      <button data-w="1024">1024</button>
+      <button data-w="768">768</button>
+      <button data-w="390">390 (HP)</button>
+      <span class="tag" id="hint" style="margin-left: 8px"></span>
+    </div>
+
+    <div class="stage">
+      <div class="clipper" id="clipper">
+        <div class="scaler" id="scaler">
+          <iframe id="view" title="pratinjau portal"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const view = document.getElementById('view')
+      const scaler = document.getElementById('scaler')
+      const clipper = document.getElementById('clipper')
+      const hint = document.getElementById('hint')
+
+      const PAGE_HEIGHT = 1800
+
+      let route = location.hash.replace(/^#/, '') || '/pay/NOC-8F3A-2C71'
+      let width = 1280
+
+      function render() {
+        const avail = document.documentElement.clientWidth - 20
+        const scale = Math.min(1, avail / width)
+
+        view.style.width = width + 'px'
+        view.style.height = PAGE_HEIGHT + 'px'
+        scaler.style.width = width + 'px'
+        scaler.style.height = PAGE_HEIGHT + 'px'
+        scaler.style.transform = 'scale(' + scale + ')'
+        clipper.style.width = width * scale + 'px'
+        clipper.style.height = PAGE_HEIGHT * scale + 'px'
+
+        view.src = './index.html#' + route
+        hint.textContent = route + ' @ ' + width + 'px' + (scale < 1 ? ' (' + Math.round(scale * 100) + '%)' : '')
+
+        document
+          .querySelectorAll('[data-route]')
+          .forEach((b) => b.classList.toggle('on', b.dataset.route === route))
+        document
+          .querySelectorAll('[data-w]')
+          .forEach((b) => b.classList.toggle('on', Number(b.dataset.w) === width))
+      }
+
+      document
+        .querySelectorAll('[data-route]')
+        .forEach((b) => b.addEventListener('click', () => { route = b.dataset.route; render() }))
+      document
+        .querySelectorAll('[data-w]')
+        .forEach((b) => b.addEventListener('click', () => { width = Number(b.dataset.w); render() }))
+
+      window.addEventListener('resize', render)
+      render()
+    </script>
+  </body>
+</html>
