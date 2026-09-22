@@ -29,6 +29,12 @@ $url = $_SERVER['REQUEST_URI'];
 
 $session = $_GET['session'];
 
+// Panel ini di-host per pelanggan: kalau permintaannya datang dari
+// <nama>.nocify.id, sesinya dikunci ke situ supaya ?session= tidak bisa
+// dipakai untuk membuka sesi pelanggan lain.
+include_once(dirname(__FILE__) . '/include/tenant.php');
+$session = mikhmon_tenant_pin($session);
+
 if (!isset($_SESSION["mikhmon"])) {
   header("Location:./admin.php?id=login");
 } elseif (empty($session)) {

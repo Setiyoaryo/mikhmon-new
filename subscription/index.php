@@ -9,6 +9,9 @@
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation; either version 2 of the License, or
  *  (at your option) any later version.
+ *
+ *  Halaman ini hanya menampilkan status dari portal. Semua pembayaran dan
+ *  perpanjangan dilakukan di portal, bukan di panel ini.
  */
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -29,54 +32,19 @@ $sub_self = (isset($_GET['hotspot']) && $_GET['hotspot'] == 'subscription')
           ? './?hotspot=subscription' . ($sub_session != '' ? '&session=' . urlencode($sub_session) : '')
           : './admin.php?id=subscription' . ($sub_session != '' ? '&session=' . urlencode($sub_session) : '');
 
-$sub_error = '';
-
 /* ---------------------------------------------------------------- aksi */
-if (isset($_POST['sub_action'])) {
-
-  if (!isset($_SESSION['mikhmon_sub_flash'])) {
-    $_SESSION['mikhmon_sub_flash'] = '';
+/* Satu-satunya aksi di halaman ini: minta portal diperiksa sekarang.
+ * Tidak mengubah data apa pun, jadi tidak perlu token sesi. */
+if (isset($_POST['sub_action']) && $_POST['sub_action'] == 'refresh') {
+  mikhmon_heartbeat_refresh(true);
+  $sub_now = mikhmon_license_status();
+  if (!$sub_now['configured']) {
+    $_SESSION['mikhmon_sub_flash'] = 'err:Panel belum terhubung ke portal. Minta file include/instance.php ke NOCIFY.';
+  } else {
+    $_SESSION['mikhmon_sub_flash'] = !empty($sub_now['stale'])
+      ? 'err:Portal belum bisa dihubungi. Data terakhir tetap dipakai.'
+      : 'ok:Data langganan berhasil diperiksa.';
   }
-
-  /* Aksi yang mengubah data wajib membawa token sesi, supaya halaman lain
-   * tidak bisa memicu hapus lisensi / hapus QRIS lewat POST. */
-  if (in_array($_POST['sub_action'], array('clear', 'qris-upload', 'qris-remove'))
-      && !mikhmon_sub_token_ok()) {
-    $_SESSION['mikhmon_sub_flash'] = 'err:Permintaan ditolak. Muat ulang halaman lalu coba lagi.';
-    echo "<script>window.location='" . $sub_self . "'</script>";
-    return;
-  }
-
-  if ($_POST['sub_action'] == 'activate') {
-    $key = isset($_POST['license_key']) ? $_POST['license_key'] : '';
-    list($ok, $res) = mikhmon_license_apply($key);
-    if ($ok) {
-      $_SESSION['mikhmon_sub_flash'] = 'ok:Lisensi berhasil dipasang. Berlaku sampai ' . $res['expires'] . '.';
-    } else {
-      $why = array(
-        'format'        => 'Format kode salah. Contoh yang benar: MKN-20251231-P1M-A1B2C3D4',
-        'paket'         => 'Nama paket pada kode tidak dikenal.',
-        'tanda-tangan'  => 'Kode ini bukan untuk instalasi ini, atau salah ketik.',
-        'gagal-tulis'   => 'Kode benar tapi file lisensi tidak bisa ditulis. Periksa izin tulis folder include/.',
-      );
-      $_SESSION['mikhmon_sub_flash'] = 'err:Kode ditolak. ' . (isset($why[$res]) ? $why[$res] : 'Kode tidak dikenal.');
-    }
-  } elseif ($_POST['sub_action'] == 'clear') {
-    mikhmon_license_clear();
-    $_SESSION['mikhmon_sub_flash'] = 'ok:Lisensi dihapus. Panel kembali ke mode tanpa lisensi.';
-  } elseif ($_POST['sub_action'] == 'qris-upload') {
-    $sub_error = mikhmon_qris_upload();
-    $_SESSION['mikhmon_sub_flash'] = ($sub_error === '')
-      ? 'ok:Gambar QRIS tersimpan.'
-      : 'err:' . $sub_error;
-  } elseif ($_POST['sub_action'] == 'qris-remove') {
-    if (mikhmon_qris_remove()) {
-      $_SESSION['mikhmon_sub_flash'] = 'ok:Gambar QRIS dihapus.';
-    } else {
-      $_SESSION['mikhmon_sub_flash'] = 'err:Tidak ada gambar QRIS yang bisa dihapus.';
-    }
-  }
-
   echo "<script>window.location='" . $sub_self . "'</script>";
   return;
 }
@@ -97,28 +65,38 @@ if ($sub_flash != '') {
 
 $sub = mikhmon_license_status();
 $sub_locked = mikhmon_license_locked();
-$sub_plans = mikhmon_license_plans();
-$sub_qris = mikhmon_qris_image_url();
 
 $sub_state_label = array(
-  'trial'   => array('Tanpa Lisensi', 'bg-info'),
-  'active'  => array('Aktif', 'bg-success'),
-  'warning' => array('Segera Berakhir', 'bg-warning'),
-  'grace'   => array('Masa Tenggang', 'bg-warning'),
-  'expired' => array('Berakhir', 'bg-danger'),
+  'unconfigured' => array('Belum Terhubung', 'bg-info'),
+  'active'       => array('Aktif', 'bg-success'),
+  'warning'      => array('Segera Berakhir', 'bg-warning'),
+  'grace'        => array('Masa Tenggang', 'bg-warning'),
+  'expired'      => array('Berakhir', 'bg-danger'),
 );
-$label = $sub_state_label[$sub['state']];
+$label = isset($sub_state_label[$sub['state']])
+       ? $sub_state_label[$sub['state']]
+       : array(htmlspecialchars($sub['state'], ENT_QUOTES), 'bg-info');
 
-/* Teks WhatsApp untuk konfirmasi pembayaran. */
-if ($sub['licensed']) {
-  $sub_wa_text = "Halo NOCIFY, saya mau memperpanjang langganan Mikhmon.\n\n"
-               . "ID Instalasi : " . mikhmon_license_pretty_id($sub['install_id']) . "\n"
-               . "Berlaku sampai : " . $sub['expires'] . " (" . $sub['plan_label'] . ")\n\n"
-               . "Saya sudah bayar lewat QRIS. Mohon dibantu aktivasi. Terima kasih.";
+$sub_pretty_id = ($sub['install_id'] != '') ? mikhmon_license_pretty_id($sub['install_id']) : '';
+
+/* Portal tujuan: tautan pembayaran kalau ada, kalau tidak akar portalnya. */
+$sub_pay_url = ($sub['pay_url'] != '') ? $sub['pay_url'] : $sub['portal'];
+
+/* Teks WhatsApp untuk tanya / perpanjang langganan. */
+$sub_wa_text = "Halo NOCIFY, saya mau tanya soal langganan Mikhmon.\n\n";
+if ($sub_pretty_id != '') {
+  $sub_wa_text .= "ID Instalasi : " . $sub_pretty_id . "\n";
+}
+if ($sub['plan_label'] != '') {
+  $sub_wa_text .= "Paket : " . $sub['plan_label'] . "\n";
+}
+if ($sub['expires'] != '') {
+  $sub_wa_text .= "Berlaku sampai : " . $sub['expires'] . "\n";
+}
+if ($sub['state'] == 'expired') {
+  $sub_wa_text .= "\nLangganan saya berakhir. Mohon dibantu perpanjangan. Terima kasih.";
 } else {
-  $sub_wa_text = "Halo NOCIFY, saya mau berlangganan Mikhmon.\n\n"
-               . "ID Instalasi : " . mikhmon_license_pretty_id($sub['install_id']) . "\n\n"
-               . "Mohon info paket dan cara pembayaran lewat QRIS. Terima kasih.";
+  $sub_wa_text .= "\nMohon info perpanjangan langganan. Terima kasih.";
 }
 ?>
 
@@ -129,12 +107,19 @@ if ($sub['licensed']) {
       <i class="fa fa-lock" style="font-size:42px"></i>
       <h2 style="margin:8px 0">LANGGANAN BERAKHIR</h2>
       <p style="margin:0">
-        Masa langganan Mikhmon berakhir pada <b><?= htmlspecialchars($sub['expires'], ENT_QUOTES) ?></b>
-        (<?= htmlspecialchars(abs((int) $sub['days']), ENT_QUOTES) ?> hari yang lalu).
+        <?= htmlspecialchars($sub['message'], ENT_QUOTES) ?>
       </p>
+      <?php if ($sub['expires'] != '') { ?>
       <p style="margin:6px 0 0 0">
-        Panel dikunci sampai lisensi diperpanjang. Silakan bayar lewat QRIS di bawah,
-        lalu kirim bukti lewat WhatsApp untuk mengaktifkan kembali.
+        Langganan terakhir berlaku sampai <b><?= htmlspecialchars($sub['expires'], ENT_QUOTES) ?></b>.
+      </p>
+      <?php } ?>
+      <p style="margin:10px 0 0 0">
+        Panel dikunci sampai langganan diperpanjang lewat portal.
+        <?php if ($sub_pay_url != '') { ?>
+        <a class="btn bg-primary" style="color:#fff" href="<?= htmlspecialchars($sub_pay_url, ENT_QUOTES) ?>"
+           target="_blank" rel="noopener"><i class="fa fa-external-link"></i> Buka portal</a>
+        <?php } ?>
       </p>
     </div>
   </div>
@@ -151,14 +136,30 @@ if ($sub['licensed']) {
   </div>
 </div>
 <?php } ?>
-<?php if (!mikhmon_license_writable()) { ?>
+
+<?php if (!$sub['configured']) { ?>
 <div class="row">
   <div class="col-12">
-    <div class="box bg-danger">
+    <div class="box bg-warning">
       <i class="fa fa-exclamation-triangle"></i>
-      Folder <code>include/</code> tidak bisa ditulis, jadi lisensi tidak akan tersimpan
-      dan ID Instalasi di atas berubah setiap halaman dimuat. Perbaiki izin tulis
-      folder <code>include/</code> di server dulu.
+      Panel ini belum terhubung ke portal langganan. Minta file <code>include/instance.php</code>
+      ke NOCIFY, lalu salin ke folder <code>include/</code> di server ini.
+    </div>
+  </div>
+</div>
+<?php } ?>
+
+<?php if ($sub['stale'] && $sub['configured']) { ?>
+<div class="row">
+  <div class="col-12">
+    <div class="box bg-warning">
+      <i class="fa fa-clock-o"></i>
+      <?php if ($sub['checked_at'] !== null) { ?>
+        Terakhir diperiksa <?= htmlspecialchars(date('d-m-Y H:i', $sub['checked_at']), ENT_QUOTES) ?>.
+        Data mungkin sudah tidak terbaru.
+      <?php } else { ?>
+        Belum pernah berhasil diperiksa ke portal.
+      <?php } ?>
     </div>
   </div>
 </div>
@@ -179,21 +180,20 @@ if ($sub['licensed']) {
           </tr>
           <tr>
             <td style="padding:4px 16px 4px 0"><b>Paket</b></td>
-            <td style="padding:4px 0"><?= $sub['licensed'] ? htmlspecialchars($sub['plan_label'], ENT_QUOTES) : '&mdash;' ?></td>
+            <td style="padding:4px 0"><?= $sub['plan_label'] != '' ? htmlspecialchars($sub['plan_label'], ENT_QUOTES) : '&mdash;' ?></td>
           </tr>
           <tr>
             <td style="padding:4px 16px 4px 0"><b>Berlaku sampai</b></td>
-            <td style="padding:4px 0"><?= $sub['licensed'] ? htmlspecialchars($sub['expires'], ENT_QUOTES) : '&mdash;' ?></td>
+            <td style="padding:4px 0"><?= $sub['expires'] != '' ? htmlspecialchars($sub['expires'], ENT_QUOTES) : '&mdash;' ?></td>
           </tr>
           <tr>
             <td style="padding:4px 16px 4px 0"><b>Sisa waktu</b></td>
             <td style="padding:4px 0">
               <?php
-                if (!$sub['licensed']) {
+                if ($sub['days'] === null) {
                   echo '&mdash;';
-                } elseif (!empty($sub['lifetime'])) {
-                  echo 'Permanen';
-                  echo (int) $sub['days'] . ' hari lagi';
+                } elseif ((int) $sub['days'] > 0) {
+                  echo '<b>' . (int) $sub['days'] . ' hari lagi</b>';
                 } elseif ((int) $sub['days'] == 0) {
                   echo '<b class="text-red">Berakhir hari ini</b>';
                 } else {
@@ -205,139 +205,58 @@ if ($sub['licensed']) {
           <tr>
             <td style="padding:4px 16px 4px 0"><b>ID Instalasi</b></td>
             <td style="padding:4px 0">
-              <code id="subInstallId"><?= htmlspecialchars(mikhmon_license_pretty_id($sub['install_id']), ENT_QUOTES) ?></code>
-              <a href="javascript:void(0)" onclick="mikhmonCopyId(this)" title="Salin ID"><i class="fa fa-copy"></i></a>
-              <div style="font-size:11px;opacity:.75">
-                Kirim ID ini ke NOCIFY saat membeli lisensi. Kode lisensi hanya berlaku untuk ID ini.
-              </div>
+              <?php if ($sub_pretty_id != '') { ?>
+                <code id="subInstallId"><?= htmlspecialchars($sub_pretty_id, ENT_QUOTES) ?></code>
+                <a href="javascript:void(0)" onclick="mikhmonCopyId(this)" title="Salin ID"><i class="fa fa-copy"></i></a>
+                <div style="font-size:11px;opacity:.75">
+                  Kirim ID ini ke NOCIFY kalau diminta. Portal memakai ID ini untuk mengenali instalasi Anda.
+                </div>
+              <?php } else { ?>
+                &mdash;
+                <div style="font-size:11px;opacity:.75">
+                  ID instalasi belum ada karena panel belum terhubung ke portal.
+                </div>
+              <?php } ?>
             </td>
           </tr>
-          <?php if ($sub['licensed']) { ?>
+          <?php if ($sub['message'] != '') { ?>
           <tr>
-            <td style="padding:4px 16px 4px 0"><b>Kode lisensi</b></td>
-            <td style="padding:4px 0"><code><?= htmlspecialchars($sub['key_short'], ENT_QUOTES) ?></code></td>
+            <td style="padding:4px 16px 4px 0"><b>Pesan portal</b></td>
+            <td style="padding:4px 0"><?= htmlspecialchars($sub['message'], ENT_QUOTES) ?></td>
+          </tr>
+          <?php } ?>
+          <?php if ($sub['checked_at'] !== null) { ?>
+          <tr>
+            <td style="padding:4px 16px 4px 0"><b>Terakhir diperiksa</b></td>
+            <td style="padding:4px 0"><?= htmlspecialchars(date('d-m-Y H:i', $sub['checked_at']), ENT_QUOTES) ?></td>
           </tr>
           <?php } ?>
         </table>
 
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header">
-        <h3><i class="fa fa-qrcode"></i> Pembayaran QRIS</h3>
-      </div>
-      <div class="card-body">
-        <div class="row">
-          <div class="col-6">
-            <?php if ($sub_qris != '') { ?>
-              <img src="<?= $sub_qris ?>" alt="QRIS <?= htmlspecialchars(MIKHMON_QRIS_MERCHANT, ENT_QUOTES) ?>"
-                   style="max-width:320px;width:100%;border-radius:6px;background:#fff;padding:6px">
-            <?php } else { ?>
-              <div class="box bg-warning">
-                <i class="fa fa-exclamation-triangle"></i>
-                Gambar QRIS belum diunggah. Unggah foto QRIS GoPay Merchant di bagian bawah halaman ini.
-              </div>
-            <?php } ?>
-            <div style="margin-top:8px;font-size:13px">
-              <div><b><?= htmlspecialchars(MIKHMON_QRIS_MERCHANT, ENT_QUOTES) ?></b></div>
-              <div>NMID: <?= htmlspecialchars(MIKHMON_QRIS_NMID, ENT_QUOTES) ?></div>
-              <div style="opacity:.75">GoPay Merchant &middot; QRIS</div>
-            </div>
-          </div>
-          <div class="col-6">
-            <p style="margin-top:0">
-              Cara berlangganan:
-            </p>
-            <ol style="padding-left:18px">
-              <li>Pilih paket di bawah, lalu scan gambar QRIS dengan aplikasi GoPay / bank apa pun.</li>
-              <li>Masukkan nominal sesuai paket.</li>
-              <li>Kirim bukti pembayaran lewat WhatsApp, sertakan ID Instalasi di atas.</li>
-              <li>NOCIFY akan mengirim kode lisensi, lalu tempel di kolom Aktivasi Lisensi.</li>
-            </ol>
-
-            <table class="table" style="width:auto">
-              <?php foreach ($sub_plans as $p) { if (empty($p['sale'])) continue; ?>
-              <tr>
-                <td style="padding:4px 16px 4px 0"><?= htmlspecialchars($p['label'], ENT_QUOTES) ?></td>
-                <td style="padding:4px 0">
-                  <?php if ($p['price'] > 0) { ?>
-                    <b><?= mikhmon_license_price($p['price']) ?></b>
-                  <?php } else { ?>
-                    <i>Hubungi Admin</i>
-                  <?php } ?>
-                </td>
-              </tr>
-              <?php } ?>
-            </table>
-
-            <a class="btn bg-success" style="color:#fff"
-               href="<?= htmlspecialchars(mikhmon_wa_link($sub_wa_text), ENT_QUOTES) ?>" target="_blank" rel="noopener">
-              <i class="fa fa-whatsapp"></i> Konfirmasi Pembayaran via WhatsApp
-            </a>
-            <a class="btn bg-info" style="color:#fff"
-               href="<?= htmlspecialchars(mikhmon_wa_link("Halo NOCIFY, saya mau tanya soal langganan Mikhmon.\n\nID Instalasi : " . mikhmon_license_pretty_id($sub['install_id'])), ENT_QUOTES) ?>"
-               target="_blank" rel="noopener">
-              <i class="fa fa-whatsapp"></i> Tanya Admin
-            </a>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row">
-  <div class="col-12">
-    <div class="card">
-      <div class="card-header">
-        <h3><i class="fa fa-key"></i> Aktivasi Lisensi</h3>
-      </div>
-      <div class="card-body">
-        <p style="margin-top:0">
-          Tempel kode lisensi yang dikirim NOCIFY. Kode berbentuk
-          <code>MKN-YYYYMMDD-PAKET-XXXXXXXX</code>.
-        </p>
-        <form method="post" action="<?= htmlspecialchars($sub_self, ENT_QUOTES) ?>" autocomplete="off">
-          <input type="hidden" name="sub_action" value="activate">
-          <input type="text" name="license_key" class="group-item" placeholder="MKN-20251231-P1M-A1B2C3D4"
-                 style="min-width:340px;text-transform:uppercase" required>
-          <button type="submit" class="btn bg-primary"><i class="fa fa-check"></i> Aktifkan</button>
-        </form>
-
-        <?php if ($sub['licensed']) { ?>
-        <form method="post" action="<?= htmlspecialchars($sub_self, ENT_QUOTES) ?>"
-              onsubmit="return confirm('Hapus lisensi dari instalasi ini?')">
-          <input type="hidden" name="sub_action" value="clear">
-          <input type="hidden" name="sub_token" value="<?= htmlspecialchars(mikhmon_sub_token(), ENT_QUOTES) ?>">
-          <button type="submit" class="btn bg-danger" style="color:#fff"><i class="fa fa-trash"></i> Hapus Lisensi</button>
-        </form>
-        <?php } ?>
-
-        <details style="margin-top:14px">
-          <summary style="cursor:pointer">Gambar QRIS merchant</summary>
-          <form method="post" action="<?= htmlspecialchars($sub_self, ENT_QUOTES) ?>" enctype="multipart/form-data" style="margin-top:8px">
-            <input type="hidden" name="sub_action" value="qris-upload">
-            <input type="hidden" name="sub_token" value="<?= htmlspecialchars(mikhmon_sub_token(), ENT_QUOTES) ?>">
-            <input type="file" name="QRIS" accept="image/png,image/jpeg,image/webp" required>
-            <button type="submit" class="btn bg-primary"><i class="fa fa-upload"></i> Unggah QRIS</button>
-          </form>
-          <?php if ($sub_qris != '') { ?>
-          <form method="post" action="<?= htmlspecialchars($sub_self, ENT_QUOTES) ?>"
-                onsubmit="return confirm('Hapus gambar QRIS?')">
-            <input type="hidden" name="sub_action" value="qris-remove">
-            <input type="hidden" name="sub_token" value="<?= htmlspecialchars(mikhmon_sub_token(), ENT_QUOTES) ?>">
-            <button type="submit" class="btn bg-danger" style="color:#fff"><i class="fa fa-trash"></i> Hapus gambar QRIS</button>
-          </form>
+        <p style="margin:14px 0 0 0">
+          <?php if ($sub_pay_url != '') { ?>
+          <a class="btn bg-primary" style="color:#fff"
+             href="<?= htmlspecialchars($sub_pay_url, ENT_QUOTES) ?>" target="_blank" rel="noopener">
+            <i class="fa fa-external-link"></i> Buka portal
+          </a>
           <?php } ?>
-          <div style="font-size:12px;opacity:.75">
-            Format PNG / JPG / WEBP, maksimal 2 MB. Tersimpan sebagai <code>img/qris-merchant.*</code>.
-          </div>
-        </details>
+          <a class="btn bg-success" style="color:#fff"
+             href="<?= htmlspecialchars(mikhmon_wa_link($sub_wa_text), ENT_QUOTES) ?>" target="_blank" rel="noopener">
+            <i class="fa fa-whatsapp"></i> Chat WhatsApp
+          </a>
+          <form method="post" action="<?= htmlspecialchars($sub_self, ENT_QUOTES) ?>" style="display:inline">
+            <input type="hidden" name="sub_action" value="refresh">
+            <button type="submit" class="btn bg-info" style="color:#fff">
+              <i class="fa fa-refresh"></i> Periksa sekarang
+            </button>
+          </form>
+        </p>
+
+        <div style="margin-top:10px;font-size:12px;opacity:.75">
+          Panel memeriksa status ke portal secara berkala. Pembayaran dan perpanjangan
+          dilakukan di portal, bukan di halaman ini.
+        </div>
+
       </div>
     </div>
   </div>

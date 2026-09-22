@@ -93,19 +93,23 @@ include_once(dirname(__FILE__) . '/subscription.php');
 </p>
 <div class="box <?= mikhmon_license_status()['state'] == 'expired' ? 'bg-danger' : (mikhmon_license_warn() ? 'bg-warning' : 'bg-info') ?>" style="margin-left:0">
   <?php $sub_a = mikhmon_license_status(); ?>
-  <?php if (!$sub_a['licensed']) { ?>
-    Belum ada lisensi terpasang. <a href="./admin.php?id=subscription">Aktifkan langganan</a>.
+  <?php if (!$sub_a['configured']) { ?>
+    Belum terhubung ke portal. <a href="./admin.php?id=subscription">Buka halaman Langganan</a>.
+  <?php } elseif ($sub_a['checked_at'] === null) { ?>
+    Menunggu data dari portal. <a href="./admin.php?id=subscription">Buka halaman Langganan</a>.
   <?php } else { ?>
     Langganan <b><?= htmlspecialchars($sub_a['plan_label'], ENT_QUOTES) ?></b>
     berlaku sampai <b><?= htmlspecialchars($sub_a['expires'], ENT_QUOTES) ?></b>
     <?php
-      if ((int) $sub_a['days'] >= 0) {
-        echo '(' . (int) $sub_a['days'] . ' hari lagi)';
+      if ($sub_a['days'] === null) {
+        echo '.';
+      } elseif ((int) $sub_a['days'] >= 0) {
+        echo '(' . (int) $sub_a['days'] . ' hari lagi).';
       } else {
-        echo '&mdash; <b>sudah berakhir ' . abs((int) $sub_a['days']) . ' hari lalu</b>';
+        echo '&mdash; <b>sudah berakhir ' . abs((int) $sub_a['days']) . ' hari lalu</b>.';
       }
-    ?>.
-    <a href="./admin.php?id=subscription">Perpanjang</a>.
+    ?>
+    <a href="./admin.php?id=subscription">Lihat langganan</a>.
   <?php } ?>
 </div>
 </div>

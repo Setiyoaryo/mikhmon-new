@@ -1,6 +1,6 @@
 <?php
 /*
- *  Mikhmon Nocify - langganan / sewa bulanan.
+ *  Mikhmon Nocify - langganan / sewa bulanan lewat portal pusat.
  *
  *  Copyright (C) 2018 Laksamadi Guko.        (Mikhmon asli)
  *  Copyright (C) 2024 NOCIFY.                (tambahan fork ini)
@@ -14,6 +14,12 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
+ *
+ *  Panel ini TIDAK lagi menyimpan kunci lisensi. Setiap beberapa jam panel
+ *  bertanya ke portal pusat "apakah instalasi ini masih aktif?", lalu
+ *  jawabannya disimpan sebagai cache supaya panel tetap jalan saat internet
+ *  mati. Harga, paket, dan QRIS semuanya diatur di portal, jadi tidak ada
+ *  rahasia apa pun yang perlu disimpan di server pelanggan.
  */
 
 if (defined('MIKHMON_SUBSCRIPTION_LOADED')) {
@@ -25,34 +31,20 @@ define('MIKHMON_SUBSCRIPTION_LOADED', 1);
  *  PENGATURAN - silakan ubah bagian ini
  * ===================================================================== */
 
-/* Kunci rahasia untuk menandatangani kode lisensi. Nilai sebenarnya sebaiknya
- * TIDAK ikut ter-commit, karena repo ini publik. Buat file
- * include/license-secret.php berisi satu baris:
- *
- *   <?php define('MIKHMON_LICENSE_SECRET', 'kunci-rahasia-anda');
- *
- * File itu sudah masuk .gitignore. File yang sama harus ada di setiap
- * instalasi pelanggan, karena panel memakai kunci ini untuk MEMERIKSA kode
- * lisensi. Kalau file itu tidak ada, dipakai nilai bawaan di bawah - dan nilai
- * bawaan itu publik, jadi siapa pun bisa membuat kode lisensinya sendiri.
- * Ganti sebelum mulai menjual, dan jangan pernah mengubahnya setelah kode
- * lisensi beredar: semua kode lama langsung tidak berlaku. */
-if (!defined('MIKHMON_LICENSE_SECRET')) {
-  $mikhmon_secret_file = dirname(__FILE__) . '/license-secret.php';
-  if (is_file($mikhmon_secret_file)) {
-    include_once $mikhmon_secret_file;
-  }
-}
-if (!defined('MIKHMON_LICENSE_SECRET')) {
-  define('MIKHMON_LICENSE_SECRET', 'nocify-mikhmon-ganti-kunci-rahasia-ini');
+/* Jarak antar pemeriksaan ke portal, dalam detik.
+ * 21600 = 6 jam. Selama cache masih lebih baru dari ini, panel tidak
+ * menghubungi portal sama sekali. */
+if (!defined('MIKHMON_HEARTBEAT_INTERVAL')) {
+  define('MIKHMON_HEARTBEAT_INTERVAL', 21600);
 }
 
-/* QRIS merchant yang ditampilkan di halaman pembayaran. */
-if (!defined('MIKHMON_QRIS_MERCHANT')) {
-  define('MIKHMON_QRIS_MERCHANT', 'NOCIFY, SOFTWARE');
-}
-if (!defined('MIKHMON_QRIS_NMID')) {
-  define('MIKHMON_QRIS_NMID', 'ID1026599320839');
+/* Umur maksimal cache, dalam detik. 604800 = 7 hari.
+ * Kalau cache sudah lebih tua dari ini (portal lama tidak bisa dihubungi),
+ * panel menganggap langganan tidak dapat diverifikasi dan mengunci diri.
+ * Instalasi yang belum pernah berhasil menghubungi portal TIDAK pernah
+ * dikunci lewat aturan ini. */
+if (!defined('MIKHMON_HEARTBEAT_MAX_AGE')) {
+  define('MIKHMON_HEARTBEAT_MAX_AGE', 604800);
 }
 
 /* Nomor WhatsApp yang dihubungi pelanggan (format internasional, tanpa +). */
@@ -60,87 +52,131 @@ if (!defined('MIKHMON_WA_NUMBER')) {
   define('MIKHMON_WA_NUMBER', '6285139495106');
 }
 
-/* Mulai memperingatkan berapa hari sebelum kedaluwarsa. */
+/* Mulai memperingatkan berapa hari sebelum kedaluwarsa. Portal yang menentukan
+ * status sebenarnya; angka ini hanya dipakai kalau portal bilang "active" tapi
+ * sisa harinya sudah mepet. */
 if (!defined('MIKHMON_LICENSE_WARN_DAYS')) {
   define('MIKHMON_LICENSE_WARN_DAYS', 7);
-}
-
-/* Kunci panel kalau lisensi sudah kedaluwarsa.
- * false = hanya tampilkan peringatan, panel tetap bisa dipakai. */
-if (!defined('MIKHMON_LICENSE_ENFORCE')) {
-  define('MIKHMON_LICENSE_ENFORCE', true);
-}
-
-/* Lama tenggang setelah kedaluwarsa sebelum panel benar-benar dikunci. */
-if (!defined('MIKHMON_LICENSE_GRACE_DAYS')) {
-  define('MIKHMON_LICENSE_GRACE_DAYS', 3);
-}
-
-/**
- * Daftar paket sewa.
- *   label  : nama yang tampil
- *   months : lama perpanjangan
- *   price  : harga rupiah. 0 = tampil "Hubungi Admin" (isi harga di sini).
- *   sale   : false = tidak ditawarkan di halaman pembayaran (dipakai kunci
- *            khusus untuk instalasi sendiri).
- */
-function mikhmon_license_plans() {
-  static $plans = null;
-  if ($plans !== null) {
-    return $plans;
-  }
-  $plans = array(
-    'P1M'  => array('code' => 'P1M',  'label' => '1 Bulan',   'months' => 1,  'price' => 0,     'sale' => true),
-    'P3M'  => array('code' => 'P3M',  'label' => '3 Bulan',   'months' => 3,  'price' => 0,     'sale' => true),
-    'P6M'  => array('code' => 'P6M',  'label' => '6 Bulan',   'months' => 6,  'price' => 0,     'sale' => true),
-    'P12M' => array('code' => 'P12M', 'label' => '12 Bulan',  'months' => 12, 'price' => 0,     'sale' => true),
-    'LIFE' => array('code' => 'LIFE', 'label' => 'Permanen',  'months' => 0,  'price' => 0,     'sale' => false),
-  );
-  return $plans;
 }
 
 /* =====================================================================
  *  Bagian dalam - umumnya tidak perlu diubah
  * ===================================================================== */
 
-/* Cache per request, direset lewat mikhmon_license_reset(). */
-$GLOBALS['mikhmon_license_data'] = null;
+$GLOBALS['mikhmon_instance_data'] = null;
+$GLOBALS['mikhmon_heartbeat_data'] = null;
+$GLOBALS['mikhmon_heartbeat_failed'] = false;
 $GLOBALS['mikhmon_license_status'] = null;
-$GLOBALS['mikhmon_license_writable'] = null;
 
-/** Lokasi file lisensi. */
-function mikhmon_license_path() {
-  return dirname(__FILE__) . '/license.php';
+/** Lokasi file kredensial instalasi. */
+function mikhmon_instance_path() {
+  return dirname(__FILE__) . '/instance.php';
 }
 
-function mikhmon_license_reset() {
-  $GLOBALS['mikhmon_license_data'] = null;
-  $GLOBALS['mikhmon_license_status'] = null;
+/** Lokasi file cache jawaban portal. */
+function mikhmon_heartbeat_cache_path() {
+  return dirname(__FILE__) . '/heartbeat-cache.php';
 }
 
-/** true kalau data lisensi benar-benar bisa disimpan. */
-function mikhmon_license_writable() {
-  mikhmon_license_data();
-  return !empty($GLOBALS['mikhmon_license_writable']);
-}
+/**
+ * Baca include/instance.php. Balikannya array('id', 'token', 'portal') yang
+ * sudah dibersihkan; nilai kosong kalau file itu tidak ada atau tidak lengkap.
+ */
+function mikhmon_instance_data() {
+  if (is_array($GLOBALS['mikhmon_instance_data'])) {
+    return $GLOBALS['mikhmon_instance_data'];
+  }
 
-function mikhmon_license_new_install_id() {
-  if (function_exists('random_bytes')) {
-    try {
-      return strtoupper(substr(bin2hex(random_bytes(8)), 0, 12));
-    } catch (Exception $e) {
-      /* fallthrough ke cara lama */
+  $data = array('id' => '', 'token' => '', 'portal' => '');
+  $path = mikhmon_instance_path();
+
+  if (is_file($path)) {
+    $mikhmon_instance = null;
+    include $path;
+    if (isset($mikhmon_instance) && is_array($mikhmon_instance)) {
+      foreach (array_keys($data) as $k) {
+        if (isset($mikhmon_instance[$k]) && is_scalar($mikhmon_instance[$k])) {
+          $data[$k] = trim((string) $mikhmon_instance[$k]);
+        }
+      }
     }
   }
-  return strtoupper(substr(md5(uniqid('', true) . mt_rand()), 0, 12));
+
+  /* Portal harus alamat http/https yang masuk akal; garis miring di akhir
+   * dibuang supaya penggabungan URL di bawah tidak menghasilkan "//". */
+  if ($data['portal'] != '' && !preg_match('#^https?://[^\s]+$#i', $data['portal'])) {
+    $data['portal'] = '';
+  }
+  $data['portal'] = rtrim($data['portal'], '/');
+
+  if (!preg_match('/^[A-Za-z0-9._-]{4,64}$/', $data['id'])) {
+    $data['id'] = '';
+  }
+
+  $GLOBALS['mikhmon_instance_data'] = $data;
+  return $data;
 }
 
-/** Tulis file lisensi dengan pola temp + rename supaya tidak pernah setengah jadi. */
-function mikhmon_license_write($data) {
-  $path = mikhmon_license_path();
+/** true kalau id, token, dan portal ketiganya terisi. */
+function mikhmon_instance_configured() {
+  $data = mikhmon_instance_data();
+  return ($data['id'] != '' && $data['token'] != '' && $data['portal'] != '');
+}
+
+/** Versi panel yang dikirim ke portal, misalnya "3.20". */
+function mikhmon_heartbeat_version() {
+  if (isset($_SESSION['v']) && is_scalar($_SESSION['v'])) {
+    if (preg_match('/^v?([0-9]+\.[0-9]+)/', trim((string) $_SESSION['v']), $m)) {
+      return $m[1];
+    }
+  }
+
+  $file = dirname(__FILE__) . '/../verson.txt';
+  if (is_file($file)) {
+    $raw = @file_get_contents($file);
+    if ($raw !== false && preg_match('/"version"\s*:\s*"?v?([0-9]+\.[0-9]+)/', $raw, $m)) {
+      return $m[1];
+    }
+  }
+
+  return '3.20';
+}
+
+/** Baca cache heartbeat. Balikannya array('time' => int, 'response' => array) atau null. */
+function mikhmon_heartbeat_read_cache() {
+  if (is_array($GLOBALS['mikhmon_heartbeat_data'])) {
+    return $GLOBALS['mikhmon_heartbeat_data'];
+  }
+
+  $path = mikhmon_heartbeat_cache_path();
+  if (!is_file($path)) {
+    return null;
+  }
+
+  $mikhmon_heartbeat = null;
+  include $path;
+
+  if (!isset($mikhmon_heartbeat) || !is_array($mikhmon_heartbeat)
+      || !isset($mikhmon_heartbeat['time']) || !is_numeric($mikhmon_heartbeat['time'])
+      || !isset($mikhmon_heartbeat['response']) || !is_array($mikhmon_heartbeat['response'])) {
+    return null;
+  }
+
+  $cache = array(
+    'time'     => (int) $mikhmon_heartbeat['time'],
+    'response' => $mikhmon_heartbeat['response'],
+  );
+  $GLOBALS['mikhmon_heartbeat_data'] = $cache;
+  return $cache;
+}
+
+/** Tulis cache lewat file sementara + rename, sama seperti include/readcfg.php. */
+function mikhmon_heartbeat_write_cache($cache) {
+  $path = mikhmon_heartbeat_cache_path();
   $body = "<?php\n"
-        . "/* Mikhmon Nocify - data langganan. Dikelola otomatis oleh panel. */\n"
-        . '$mikhmon_license = ' . var_export($data, true) . ";\n";
+        . "/* Mikhmon Nocify - cache heartbeat portal. Dikelola otomatis oleh panel. */\n"
+        . '$mikhmon_heartbeat = ' . var_export($cache, true) . ";\n";
+
   $tmp = $path . '.' . getmypid() . '.' . mt_rand(1000, 9999) . '.tmp';
   if (@file_put_contents($tmp, $body) === strlen($body)) {
     if (@rename($tmp, $path)) {
@@ -148,193 +184,235 @@ function mikhmon_license_write($data) {
     }
   }
   @unlink($tmp);
-  /* Cadangan kalau folder tidak mengizinkan rename. Panjangnya juga diperiksa:
-   * tulisan yang terpotong tidak boleh dipakai, karena file lisensi yang
-   * setengah jadi akan membuat semua halaman gagal. */
+
+  /* Cadangan kalau folder tidak mengizinkan rename; panjangnya diperiksa juga
+   * supaya file yang setengah jadi tidak pernah dipakai. */
   return @file_put_contents($path, $body) === strlen($body);
 }
 
-/** Baca data lisensi. Kalau belum ada, buat ID instalasi baru. */
-function mikhmon_license_data() {
-  if (is_array($GLOBALS['mikhmon_license_data'])) {
-    return $GLOBALS['mikhmon_license_data'];
+/**
+ * POST JSON ke portal. Balikannya array hasil decode kalau HTTP 200, atau null
+ * kalau koneksi gagal, timeout, atau status bukan 200.
+ *
+ * Polanya sama dengan mikhmon_api_post() di lib/routeros_api.class.php: cURL
+ * kalau ada, kalau tidak file_get_contents + stream context. Bedanya di sini
+ * timeout-nya pendek dan status HTTP diperiksa.
+ */
+function mikhmon_heartbeat_http_post($url, $payload, $timeout_sec) {
+  $body = json_encode($payload);
+  if ($body === false) {
+    return null;
   }
 
-  $data = array('install_id' => '', 'key' => '', 'plan' => '', 'expires' => '', 'activated' => '');
+  $headers = array(
+    'Content-Type: application/json',
+    'Accept: application/json',
+  );
 
-  $path = mikhmon_license_path();
-  if (is_file($path)) {
-    $mikhmon_license = null;
-    include $path;
-    if (isset($mikhmon_license) && is_array($mikhmon_license)) {
-      foreach ($data as $k => $v) {
-        if (isset($mikhmon_license[$k]) && is_scalar($mikhmon_license[$k])) {
-          $data[$k] = (string) $mikhmon_license[$k];
-        }
-      }
+  if (function_exists('curl_init')) {
+    $ch = curl_init();
+    if ($ch === false) {
+      return null;
     }
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout_sec);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, false);
+
+    $out = @curl_exec($ch);
+    if ($out === false) {
+      @curl_close($ch);
+      return null;
+    }
+    $code = (int) @curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    @curl_close($ch);
+    if ($code != 200) {
+      return null;
+    }
+
+    $decoded = json_decode($out, true);
+    return is_array($decoded) ? $decoded : null;
   }
 
-  if (!preg_match('/^[A-Z0-9]{12}$/', $data['install_id'])) {
-    $data['install_id'] = mikhmon_license_new_install_id();
-    $GLOBALS['mikhmon_license_writable'] = mikhmon_license_write($data);
-  } else {
-    /* temp+rename butuh folder yang bisa ditulis; fallback in-place butuh filenya. */
-    $GLOBALS['mikhmon_license_writable'] = is_writable(dirname($path)) || is_writable($path);
+  $context = stream_context_create(array('http' => array(
+    'method'        => 'POST',
+    'header'        => implode("\r\n", $headers) . "\r\n",
+    'content'       => $body,
+    'timeout'       => $timeout_sec,
+    'ignore_errors' => true,
+  )));
+
+  $out = @file_get_contents($url, false, $context);
+  if ($out === false) {
+    return null;
   }
 
-  $GLOBALS['mikhmon_license_data'] = $data;
-  return $data;
-}
-
-function mikhmon_license_sign($expiry, $plan, $bind) {
-  return strtoupper(substr(hash_hmac('sha256', $expiry . '|' . $plan . '|' . $bind, MIKHMON_LICENSE_SECRET), 0, 8));
-}
-
-function mikhmon_license_sig_match($a, $b) {
-  if (function_exists('hash_equals')) {
-    return hash_equals($a, $b);
+  /* Dengan ignore_errors, jawaban 4xx/5xx tetap terbaca - jadi statusnya harus
+   * diperiksa dari baris pertama header. */
+  $code = 0;
+  if (isset($http_response_header[0]) && preg_match('/\s(\d{3})\s/', $http_response_header[0], $m)) {
+    $code = (int) $m[1];
   }
-  return $a === $b;
+  if ($code != 200) {
+    return null;
+  }
+
+  $decoded = json_decode($out, true);
+  return is_array($decoded) ? $decoded : null;
 }
 
 /**
- * Periksa kode lisensi. Format: MKN-YYYYMMDD-PAKET-SIGNATURE
- * Balikannya array data lisensi, atau string alasan kalau ditolak.
+ * Minta status terbaru ke portal, dengan cache.
+ *
+ * - Tidak dipaksa dan cache masih lebih baru dari MIKHMON_HEARTBEAT_INTERVAL:
+ *   langsung balik, tanpa panggilan jaringan.
+ * - Berhasil: jawaban disimpan ke include/heartbeat-cache.php.
+ * - Gagal (koneksi, timeout, bukan 200): cache lama dipertahankan dan
+ *   $GLOBALS['mikhmon_heartbeat_failed'] di-set, sehingga status jadi "stale".
+ *
+ * Balikannya array('time' => int, 'response' => array) atau null kalau belum
+ * ada data sama sekali.
  */
-function mikhmon_license_parse($key, $install_id) {
-  $key = strtoupper(trim((string) $key));
-  $key = preg_replace('/[^A-Z0-9\-]/', '', $key);
-  $parts = explode('-', $key, 4);
-  if (count($parts) != 4) {
-    return 'format';
+function mikhmon_heartbeat_refresh($force = false) {
+  $cache = mikhmon_heartbeat_read_cache();
+
+  if (!$force && is_array($cache)
+      && (time() - (int) $cache['time']) < MIKHMON_HEARTBEAT_INTERVAL) {
+    return $cache;
   }
-  list($tag, $expiry, $plan, $sig) = $parts;
-  if ($tag != 'MKN') {
-    return 'format';
+
+  if (!mikhmon_instance_configured()) {
+    return $cache;
   }
-  if (!preg_match('/^\d{8}$/', $expiry) || !preg_match('/^[A-Z0-9]{8}$/', $sig)) {
-    return 'format';
-  }
-  $plans = mikhmon_license_plans();
-  if (!isset($plans[$plan])) {
-    return 'paket';
-  }
-  if (!mikhmon_license_sig_match(mikhmon_license_sign($expiry, $plan, $install_id), $sig)
-      && !mikhmon_license_sig_match(mikhmon_license_sign($expiry, $plan, '*'), $sig)) {
-    return 'tanda-tangan';
-  }
-  $y = (int) substr($expiry, 0, 4);
-  $m = (int) substr($expiry, 4, 2);
-  $d = (int) substr($expiry, 6, 2);
-  if (!checkdate($m, $d, $y)) {
-    return 'format';
-  }
-  return array(
-    'key'     => 'MKN-' . $expiry . '-' . $plan . '-' . $sig,
-    'plan'    => $plan,
-    'expires' => sprintf('%04d-%02d-%02d', $y, $m, $d),
+
+  $inst = mikhmon_instance_data();
+  $payload = array(
+    'instance_id' => $inst['id'],
+    'token'       => $inst['token'],
+    'version'     => mikhmon_heartbeat_version(),
   );
-}
+  $url = $inst['portal'] . '/api/v1/heartbeat';
 
-/** Simpan kode lisensi yang baru. Balikannya array(status, hasil). */
-function mikhmon_license_apply($key) {
-  $data = mikhmon_license_data();
-  $parsed = mikhmon_license_parse($key, $data['install_id']);
-  if (!is_array($parsed)) {
-    return array(false, $parsed);
+  $response = mikhmon_heartbeat_http_post($url, $payload, 10);
+  if (!is_array($response)) {
+    $GLOBALS['mikhmon_heartbeat_failed'] = true;
+    return $cache;
   }
-  $data['key'] = $parsed['key'];
-  $data['plan'] = $parsed['plan'];
-  $data['expires'] = $parsed['expires'];
-  $data['activated'] = date('Y-m-d');
-  if (!mikhmon_license_write($data)) {
-    return array(false, 'gagal-tulis');
-  }
-  mikhmon_license_reset();
-  return array(true, $parsed);
-}
 
-function mikhmon_license_clear() {
-  $data = mikhmon_license_data();
-  $data['key'] = '';
-  $data['plan'] = '';
-  $data['expires'] = '';
-  $data['activated'] = '';
-  $ok = mikhmon_license_write($data);
-  mikhmon_license_reset();
-  return $ok;
+  $new = array('time' => time(), 'response' => $response);
+  mikhmon_heartbeat_write_cache($new);
+
+  /* Jawaban baru tetap dipakai walau file cache gagal ditulis, supaya
+   * permintaan ini tidak menampilkan data lama. */
+  $GLOBALS['mikhmon_heartbeat_data'] = $new;
+  $GLOBALS['mikhmon_heartbeat_failed'] = false;
+  $GLOBALS['mikhmon_license_status'] = null;
+
+  return $new;
 }
 
 /**
  * Status langganan.
- *   state : trial | active | warning | grace | expired
- *   days  : sisa hari (negatif kalau sudah lewat)
+ *   state : unconfigured | active | warning | grace | expired
+ *   days  : sisa hari (negatif kalau sudah lewat), null kalau tidak diketahui
+ *
+ * Aturan penting: instalasi yang belum pernah berhasil menghubungi portal
+ * (belum ada include/instance.php, atau belum ada cache sama sekali) TIDAK
+ * PERNAH dianggap kedaluwarsa. Jadi instalasi baru / portal yang sedang mati
+ * tidak bisa mengunci panel sendiri.
  */
 function mikhmon_license_status() {
   if (is_array($GLOBALS['mikhmon_license_status'])) {
     return $GLOBALS['mikhmon_license_status'];
   }
 
-  $data = mikhmon_license_data();
-  $plans = mikhmon_license_plans();
-  $today = strtotime(date('Y-m-d'));
+  $inst = mikhmon_instance_data();
+  $configured = mikhmon_instance_configured();
 
   $out = array(
-    'state'        => 'trial',
-    'plan'         => '',
-    'plan_label'   => '',
-    'expires'      => '',
-    'days'         => null,
-    'install_id'   => $data['install_id'],
-    'key'          => '',
-    'key_short'    => '',
-    'activated'    => $data['activated'],
-    'licensed'     => false,
-    'lifetime'     => false,
-    'active'       => true,
-    'grace_days'   => MIKHMON_LICENSE_GRACE_DAYS,
+    'state'      => 'unconfigured',
+    'plan'       => '',
+    'plan_label' => '',
+    'expires'    => '',
+    'days'       => null,
+    'install_id' => $inst['id'],
+    'licensed'   => false,
+    'active'     => true,
+    'message'    => $configured
+                  ? 'Belum ada data dari portal. Panel tetap bisa dipakai.'
+                  : 'Panel ini belum terhubung ke portal langganan.',
+    'pay_url'    => '',
+    'checked_at' => null,
+    'stale'      => true,
+    'configured' => $configured,
+    'portal'     => $inst['portal'],
   );
 
-  if ($data['key'] == '' || $data['expires'] == '') {
+  if (!$configured) {
     $GLOBALS['mikhmon_license_status'] = $out;
     return $out;
   }
 
-  /* Tanggal harus berbentuk YYYY-MM-DD dan tanggal yang sah. Nilai rusak
-   * dianggap "tanpa lisensi", bukan "kedaluwarsa", supaya file yang salah
-   * diedit tidak mengunci panel. */
-  $m = array();
-  if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $data['expires'], $m)
-      || !checkdate((int) $m[2], (int) $m[3], (int) $m[1])) {
+  /* Sekaligus memicu heartbeat kalau cache sudah waktunya diperbarui. */
+  $cache = mikhmon_heartbeat_refresh(false);
+
+  /* Portal belum pernah berhasil dihubungi dan belum ada cache: jangan kunci
+   * panel. Sama seperti instalasi yang belum terdaftar. */
+  if (!is_array($cache)) {
+    $out['message'] = 'Portal langganan belum bisa dihubungi. Panel tetap bisa dipakai.';
     $GLOBALS['mikhmon_license_status'] = $out;
     return $out;
   }
 
-  /* Lisensi permanen tidak pernah dikonversi ke timestamp: strtotime() tahun
-   * 9999 gagal di PHP 32-bit dan akan berbalik jadi "kedaluwarsa". */
-  if ($data['plan'] == 'LIFE') {
-    $days = 36500;
-    $out['lifetime'] = true;
-  } else {
-    $days = (int) round((strtotime($data['expires']) - $today) / 86400);
+  $resp = $cache['response'];
+  $age = time() - (int) $cache['time'];
+
+  $state = isset($resp['state']) ? (string) $resp['state'] : '';
+  if (!in_array($state, array('active', 'warning', 'grace', 'expired'))) {
+    /* Jawaban yang tidak dikenal jangan sampai mengunci panel. */
+    $state = 'active';
   }
 
-  $out['licensed'] = true;
-  $out['plan'] = $data['plan'];
-  $out['plan_label'] = isset($plans[$data['plan']]) ? $plans[$data['plan']]['label'] : $data['plan'];
-  $out['expires'] = $data['expires'];
-  $out['key'] = $data['key'];
-  $out['key_short'] = 'MKN-•••-' . $data['plan'] . '-' . substr($data['key'], -4);
+  $days = null;
+  if (isset($resp['days_left']) && is_numeric($resp['days_left'])) {
+    $days = (int) $resp['days_left'];
+  } elseif (isset($resp['expires_at']) && is_string($resp['expires_at'])) {
+    $ts = strtotime($resp['expires_at']);
+    if ($ts !== false) {
+      $days = (int) round(($ts - strtotime(date('Y-m-d'))) / 86400);
+    }
+  }
+
+  if ($state == 'active' && $days !== null && $days <= MIKHMON_LICENSE_WARN_DAYS) {
+    $state = 'warning';
+  }
+
+  $out['state'] = $state;
+  $out['plan'] = isset($resp['plan']) ? (string) $resp['plan'] : '';
+  $out['plan_label'] = $out['plan'];
+  $out['expires'] = isset($resp['expires_at']) ? (string) $resp['expires_at'] : '';
   $out['days'] = $days;
+  $out['licensed'] = true;
+  $out['active'] = ($state != 'expired');
+  $out['message'] = isset($resp['message']) ? (string) $resp['message'] : '';
+  $out['pay_url'] = isset($resp['pay_url']) ? (string) $resp['pay_url'] : '';
+  $out['checked_at'] = (int) $cache['time'];
+  $out['stale'] = ($age > MIKHMON_HEARTBEAT_INTERVAL * 2)
+                || !empty($GLOBALS['mikhmon_heartbeat_failed']);
 
-  if ($days < 0) {
-    $out['state'] = (-$days <= MIKHMON_LICENSE_GRACE_DAYS) ? 'grace' : 'expired';
+  /* Terlalu lama tidak bisa diperbarui = langganan tidak dapat diverifikasi.
+   * Hanya berlaku kalau cache pernah ada, artinya portal pernah terhubung. */
+  if ($age > MIKHMON_HEARTBEAT_MAX_AGE) {
+    $out['state'] = 'expired';
     $out['active'] = false;
-  } elseif ($days <= MIKHMON_LICENSE_WARN_DAYS) {
-    $out['state'] = 'warning';
-  } else {
-    $out['state'] = 'active';
+    $out['stale'] = true;
+    $out['message'] = 'Data langganan sudah lebih dari '
+                    . (int) round(MIKHMON_HEARTBEAT_MAX_AGE / 86400)
+                    . ' hari tidak diperbarui. Hubungi NOCIFY.';
   }
 
   $GLOBALS['mikhmon_license_status'] = $out;
@@ -343,9 +421,6 @@ function mikhmon_license_status() {
 
 /** true kalau panel harus dikunci. */
 function mikhmon_license_locked() {
-  if (!MIKHMON_LICENSE_ENFORCE) {
-    return false;
-  }
   $st = mikhmon_license_status();
   return ($st['state'] == 'expired');
 }
@@ -356,20 +431,13 @@ function mikhmon_license_warn() {
   return in_array($st['state'], array('warning', 'grace', 'expired'));
 }
 
-/** 1234ABCD5678 -> 1234-ABCD-5678 */
+/** ABCD1234EFGH -> ABCD-1234-EFGH */
 function mikhmon_license_pretty_id($id) {
   $id = (string) $id;
   if (strlen($id) != 12) {
     return $id;
   }
   return substr($id, 0, 4) . '-' . substr($id, 4, 4) . '-' . substr($id, 8, 4);
-}
-
-function mikhmon_license_price($price) {
-  if (!$price) {
-    return '';
-  }
-  return 'Rp ' . number_format((float) $price, 0, ',', '.');
 }
 
 function mikhmon_wa_link($text = '') {
@@ -380,18 +448,12 @@ function mikhmon_wa_link($text = '') {
   return $url;
 }
 
-/** Nama file gambar QRIS kalau ada, dalam bentuk URL yang bisa dipakai <img>. */
-function mikhmon_qris_image_url() {
-  $dir = dirname(__FILE__) . '/../img/';
-  foreach (array('png', 'jpg', 'jpeg', 'webp') as $ext) {
-    if (is_file($dir . 'qris-merchant.' . $ext)) {
-      return './img/qris-merchant.' . $ext . '?t=' . filemtime($dir . 'qris-merchant.' . $ext);
-    }
-  }
-  return '';
-}
-
-/** Pita peringatan yang tampil di atas semua halaman. */
+/**
+ * Pita peringatan yang tampil di atas semua halaman.
+ *   active/unconfigured : tanpa pita (instalasi baru tidak boleh diteriaki)
+ *   warning/grace       : pita kuning
+ *   expired             : pita merah, panel dikunci
+ */
 function mikhmon_license_banner() {
   if (!mikhmon_license_warn()) {
     return '';
@@ -400,102 +462,31 @@ function mikhmon_license_banner() {
 
   if ($st['state'] == 'expired') {
     return '<div class="box bg-danger" style="margin:0;border-radius:0;text-align:center">'
-         . '<i class="fa fa-lock"></i> <b>Langganan Mikhmon sudah berakhir.</b> '
-         . 'Panel dikunci sampai lisensi diperpanjang. '
-         . '<a href="./admin.php?id=subscription" style="color:#fff;text-decoration:underline">Perpanjang sekarang</a>'
+         . '<i class="fa fa-lock"></i> <b>Langganan Mikhmon berakhir, panel dikunci.</b> '
+         . 'Perpanjang lewat portal supaya panel bisa dipakai lagi. '
+         . '<a href="./admin.php?id=subscription" style="color:#fff;text-decoration:underline">Buka halaman Langganan</a>'
          . '</div>';
   }
+
   if ($st['state'] == 'grace') {
     return '<div class="box bg-warning" style="margin:0;border-radius:0;text-align:center">'
          . '<i class="fa fa-exclamation-triangle"></i> <b>Langganan sudah lewat '
-         . htmlspecialchars(abs((int) $st['days']), ENT_QUOTES) . ' hari.</b> '
-         . 'Masa tenggang ' . (int) MIKHMON_LICENSE_GRACE_DAYS . ' hari. '
+         . ($st['days'] !== null ? htmlspecialchars(abs((int) $st['days']), ENT_QUOTES) : 'beberapa')
+         . ' hari.</b> Segera perpanjang supaya panel tidak dikunci. '
          . '<a href="./admin.php?id=subscription">Perpanjang sekarang</a>'
          . '</div>';
   }
+
+  $text = 'Langganan Mikhmon segera berakhir';
+  if ($st['days'] !== null) {
+    $text .= ' (' . (int) $st['days'] . ' hari lagi)';
+  }
+  if ($st['expires'] != '') {
+    $text .= ', berlaku sampai ' . htmlspecialchars($st['expires'], ENT_QUOTES);
+  }
+
   return '<div class="box bg-warning" style="margin:0;border-radius:0;text-align:center">'
-       . '<i class="fa fa-clock-o"></i> Langganan Mikhmon berakhir dalam <b>'
-       . (int) $st['days'] . ' hari</b> (' . htmlspecialchars($st['expires'], ENT_QUOTES) . '). '
+       . '<i class="fa fa-clock-o"></i> ' . $text . '. '
        . '<a href="./admin.php?id=subscription">Lihat langganan</a>'
        . '</div>';
-}
-
-/**
- * Simpan gambar QRIS dari form unggah.
- * Balikannya pesan galat, atau string kosong kalau berhasil.
- */
-function mikhmon_qris_upload() {
-  if (!isset($_FILES['QRIS']) || !is_uploaded_file($_FILES['QRIS']['tmp_name'])) {
-    return 'Tidak ada file yang diunggah, atau file terlalu besar untuk server.';
-  }
-  $file = $_FILES['QRIS'];
-  if ($file['error'] != UPLOAD_ERR_OK) {
-    return 'Unggahan gagal (kode ' . (int) $file['error'] . '). Coba file yang lebih kecil.';
-  }
-  if ($file['size'] > 2 * 1024 * 1024) {
-    return 'Ukuran file lebih dari 2 MB.';
-  }
-  $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-  if (!in_array($ext, array('png', 'jpg', 'jpeg', 'webp'))) {
-    return 'Hanya file PNG, JPG, atau WEBP yang diizinkan.';
-  }
-  /* Cek isi filenya benar-benar gambar, jangan cuma percaya ekstensi. */
-  if (@getimagesize($file['tmp_name']) === false) {
-    return 'File itu bukan gambar yang sah.';
-  }
-  $dir = dirname(__FILE__) . '/../img/';
-  if (!is_dir($dir) || !is_writable($dir)) {
-    return 'Folder img/ tidak bisa ditulis. Periksa izin tulis foldernya.';
-  }
-  $target = $dir . 'qris-merchant.' . $ext;
-  if (!@move_uploaded_file($file['tmp_name'], $target)) {
-    return 'Gambar gagal dipindahkan ke folder img/.';
-  }
-  @chmod($target, 0644);
-  /* Gambar lama baru dihapus setelah yang baru benar-benar tersimpan. */
-  foreach (array('png', 'jpg', 'jpeg', 'webp') as $other) {
-    if ($other != $ext) {
-      @unlink($dir . 'qris-merchant.' . $other);
-    }
-  }
-  return '';
-}
-
-function mikhmon_qris_remove() {
-  $dir = dirname(__FILE__) . '/../img/';
-  $removed = false;
-  foreach (array('png', 'jpg', 'jpeg', 'webp') as $ext) {
-    if (is_file($dir . 'qris-merchant.' . $ext)) {
-      if (@unlink($dir . 'qris-merchant.' . $ext)) {
-        $removed = true;
-      }
-    }
-  }
-  return $removed;
-}
-
-/* --------------------------------------------------------- token CSRF ---
- * Panel ini tidak punya kerangka token sendiri, sedangkan tiga aksi di
- * halaman langganan bisa dipicu halaman lain lewat POST biasa (termasuk
- * menghapus lisensi). Jadi ketiganya memakai token per sesi. */
-
-function mikhmon_sub_token() {
-  if (empty($_SESSION['mikhmon_sub_token'])) {
-    $_SESSION['mikhmon_sub_token'] = function_exists('random_bytes')
-      ? bin2hex(random_bytes(16))
-      : md5(uniqid('', true) . mt_rand());
-  }
-  return $_SESSION['mikhmon_sub_token'];
-}
-
-function mikhmon_sub_token_ok() {
-  $sent = isset($_POST['sub_token']) ? (string) $_POST['sub_token'] : '';
-  $mine = isset($_SESSION['mikhmon_sub_token']) ? (string) $_SESSION['mikhmon_sub_token'] : '';
-  if ($mine === '' || $sent === '') {
-    return false;
-  }
-  if (function_exists('hash_equals')) {
-    return hash_equals($mine, $sent);
-  }
-  return $mine === $sent;
 }

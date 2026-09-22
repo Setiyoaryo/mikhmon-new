@@ -19,6 +19,8 @@
 /* Langganan: dipakai oleh gerbang menu dan pita peringatan di bawah. Dimuat di
  * luar blok sesi supaya menu.php tetap aman dipanggil saat belum login. */
 include_once(dirname(__FILE__) . '/subscription.php');
+/* Subdomain -> sesi router. Dipakai untuk menyembunyikan pemilih sesi. */
+include_once(dirname(__FILE__) . '/tenant.php');
 session_start();
 // hide all error
 error_reporting(0);
@@ -272,6 +274,7 @@ include('./info.php');
     }
     ?>
   </select>
+  <?php if (!mikhmon_tenant_locked()) { ?>
   <select class="connect optfa ses text-right mr-t-10 pd-5">
     <option id="MikhmonSession" value="<?= $session; ?>"><?= $hotspotname; ?></option>
       <?php
@@ -289,6 +292,7 @@ include('./info.php');
       ?>
     
   </select>
+  <?php } ?>
   <a title="Idle Timeout" style="<?= $didleto; ?>"><span style="width:70px;" class="pd-5 radius-3"><i class="fa fa-clock-o mr-1"></i>  <span class="mr-1" id="timer"></span></span></a>
 </div>
 </div>

@@ -26,6 +26,12 @@ $url = $_SERVER['REQUEST_URI'];
 
 // load session MikroTik
 $session = $_GET['session'];
+
+// Panel ini di-host per pelanggan: kalau permintaannya datang dari
+// <nama>.nocify.id, sesinya dikunci ke situ supaya ?session= tidak bisa
+// dipakai untuk membuka sesi pelanggan lain.
+include_once(dirname(__FILE__) . '/include/tenant.php');
+$session = mikhmon_tenant_pin($session);
 $id = $_GET['id'];
 $c = $_GET['c'];
 $router = $_GET['router'];
