@@ -93,6 +93,35 @@ if (!isset($_SESSION["mikhmon"])) {
     </h3>
     
 </div>
+<?php
+/*
+ * Keterangan sesaat setelah voucher dibuat: berapa yang jadi, batchnya yang
+ * mana, dan bahwa tombol Print di toolbar mencetak seluruh batch itu. Dulu
+ * halaman Generate langsung kembali ke form kosong, jadi tidak ada satu pun
+ * tanda bahwa 1000 voucher sudah jadi - dan tidak jelas apa yang akan dicetak.
+ */
+if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_generate_hasil'])) {
+  $gh = $_SESSION['mikhmon_generate_hasil'];
+  unset($_SESSION['mikhmon_generate_hasil']);
+  $gh_qty = isset($gh['added']) ? (int) $gh['added'] : 0;
+  $gh_gagal = isset($gh['failed']) ? (int) $gh['failed'] : 0;
+  ?>
+<div class="card-body pd-b-0">
+  <div class="box success">
+    <b><?= number_format($gh_qty, 0, ",", "."); ?></b> voucher created for profile
+    <b><?= htmlspecialchars(isset($gh['profile']) ? $gh['profile'] : '', ENT_QUOTES); ?></b>
+    &middot; batch <span class="mono"><?= htmlspecialchars(isset($gh['comment']) ? $gh['comment'] : '', ENT_QUOTES); ?></span>
+    <?php if ($gh_gagal > 0) { ?>
+    &middot; <span class="cl-danger"><?= $gh_gagal; ?> failed</span>
+    <?php } ?>
+    <br>
+    All <b><?= number_format($gh_qty, 0, ",", "."); ?></b> of them are listed below.
+    The <b>Print</b> buttons above print this whole batch.
+  </div>
+</div>
+  <?php
+}
+?>
 <div class="card-body">
   <div class="row">
    <div class="col-6 pd-t-5 pd-b-5">
@@ -155,15 +184,28 @@ if (!isset($_SESSION["mikhmon"])) {
         // tied to the current filter the way the two buttons above are. ?>
   <button class="btn bg-red" onclick="if(confirm('Remove UNUSED vouchers older than 30 days?\n\nOnly vouchers that have never been logged in with (uptime 0s) and whose comment date is older than 30 days are removed. Vouchers that were used are not touched.')){loadpage('./?remove-unused-hotspot-user=1&days=30&session=<?= $session; ?>');loader();}else{}" title="Remove unused vouchers older than 30 days">  <i class="fa fa-trash"></i> <?= $_unused_older ?></button>
   <script>
+    /*
+     * Yang dicetak adalah yang sedang terlihat di daftar: kalau sebuah Comment
+     * dipilih, satu batch itu; kalau tidak tapi sebuah Profile dipilih, semua
+     * voucher profil itu. Sebelumnya cuma Comment yang bisa, jadi untuk
+     * mencetak satu batch orang harus tahu dulu bahwa Comment-nya harus
+     * dipilih - dan tombolnya diam-diam tidak melakukan apa-apa kalau belum.
+     */
     function printV(a,b){
     var comm = document.getElementById('comment').value;
-    var url = "./voucher/print.php?id="+comm+"&"+a+"="+b+"&session=<?= $session; ?>";
-    if (comm === "" ){
+    var prof = "<?= $prof; ?>";
+    var url = "";
+    if (comm !== ""){
+      url = "./voucher/print.php?id="+encodeURIComponent(comm)+"&"+a+"="+b+"&session=<?= $session; ?>";
+    } else if (prof !== "" && prof !== "all"){
+      url = "./voucher/print.php?profile="+encodeURIComponent(prof)+"&"+a+"="+b+"&session=<?= $session; ?>";
+    }
+    if (url === ""){
       <?php if ($currency == in_array($currency, $cekindo['indo'])) { ?>
-      alert('Silakan pilih salah satu Comment terlebih dulu!');
+      alert('Silakan pilih salah satu Comment atau Profile terlebih dulu!');
       <?php
     } else { ?>
-      alert('Please choose one of the Comments first!');
+      alert('Please choose a Comment or a Profile first!');
       <?php
     } ?>
     }else{

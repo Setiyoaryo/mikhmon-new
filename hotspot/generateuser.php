@@ -258,10 +258,30 @@ date_default_timezone_set($_SESSION['timezone']);
 		}
 
 
+		/*
+		 * Setelah membuat voucher, jangan kembali ke form kosong: dulu itu yang
+		 * terjadi, sehingga tombol cetak untuk batch yang baru dibuat tidak
+		 * pernah terlihat dan tidak jelas berapa voucher yang jadi.
+		 *
+		 * Sekarang mendarat di daftar user yang sudah tersaring ke batch itu:
+		 * batchnya kelihatan, jumlahnya kelihatan, dan tombol Print di toolbar
+		 * mencetak seluruh batch itu. Pindah halaman juga menjaga tombol
+		 * refresh tidak membuat batch kedua.
+		 */
+		$hasil = is_array($bulkresult) ? $bulkresult : array();
+		$_SESSION['mikhmon_generate_hasil'] = array(
+			'comment' => $commt,
+			'profile' => $profile,
+			'qty'     => $qty,
+			'added'   => isset($hasil['added']) ? (int) $hasil['added'] : $qty,
+			'failed'  => isset($hasil['failed']) ? (int) $hasil['failed'] : 0,
+		);
+
 		if ($qty < 2) {
 			echo "<script>window.location='./?hotspot-user=" . $u[1] . "&session=" . $session . "'</script>";
 		} else {
-			echo "<script>window.location='./?hotspot-user=generate&session=" . $session . "'</script>";
+			echo "<script>window.location='./?hotspot=users&comment=" . urlencode($commt)
+				. "&profile=" . urlencode($profile) . "&session=" . $session . "'</script>";
 		}
 	}
 

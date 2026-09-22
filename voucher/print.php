@@ -45,6 +45,9 @@ if (!isset($_SESSION["mikhmon"])) {
   $userp = $_GET['user'];
 
   require('../lib/routeros_api.class.php');
+
+  /* Mode cetak ketiga: ?profile=<nama>. Lihat cabangnya di bawah. */
+  $prof = isset($_GET['profile']) ? $_GET['profile'] : '';
   $API = new RouterosAPI();
   $API->debug = false;
   $API->connect($iphost, $userhost, decrypt($passwdhost));
@@ -58,7 +61,8 @@ if (!isset($_SESSION["mikhmon"])) {
     $prefix = explode('-', $userp)[$iuser - 2];
     $user = explode('-', $userp)[$iuser - 1];
     if ($iuser == 3) {
-      $user = $prefix . "-" . $user;
+
+    $user = $prefix . "-" . $user;
     } else {
       $user = $user;
     }
@@ -67,6 +71,14 @@ if (!isset($_SESSION["mikhmon"])) {
   } elseif ($id != "") {
     $usermode = explode('-', $id)[0];
     $getuser = $API->comm('/ip/hotspot/user/print', array("?comment" => "$id", "?uptime" => "0s"));
+    $TotalReg = count($getuser);
+  } elseif ($prof != "" && $prof != "all") {
+    /*
+     * Mode ketiga: cetak semua voucher satu profile. Dipakai tombol Print di
+     * daftar user waktu yang dipilih adalah Profile, bukan Comment - jadi yang
+     * dicetak selalu yang sedang terlihat di daftar.
+     */
+    $getuser = $API->comm("/ip/hotspot/user/print", array("?profile" => "$prof", "?uptime" => "0s"));
     $TotalReg = count($getuser);
   }
   $getuprofile = $getuser[0]['profile'];
