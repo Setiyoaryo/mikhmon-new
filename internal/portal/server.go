@@ -230,6 +230,9 @@ type heartbeatReq struct {
 	// "taufiq". Panel khusus yang hanya melayani satu pelanggan boleh
 	// mengosongkannya.
 	Tenant string `json:"tenant"`
+	// Host adalah alamat web panelnya sendiri, mis. "taufiq.nocify.id". Hanya
+	// dipakai untuk melengkapi nama panel yang masih nama bawaan; boleh kosong.
+	Host string `json:"host"`
 }
 
 // heartbeatResp adalah satu-satunya hal yang perlu diketahui panel pelanggan.
@@ -292,6 +295,12 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		cust = hosted[0]
+	}
+	// Panel yang mendaftar tanpa alamat web (mis. dijalankan dari baris
+	// perintah) namanya jadi "Panel tanpa nama". Laporan berikutnya datang
+	// dari browser, jadi alamatnya bisa dipakai memperbaiki nama itu.
+	if _, err := s.store.NameInstance(inst.ID, req.Host); err != nil && !errors.Is(err, ErrNotFound) {
+		log.Printf("galat melengkapi nama panel %s: %v", inst.ID, err)
 	}
 	_ = s.store.TouchInstance(inst.ID, req.Version)
 

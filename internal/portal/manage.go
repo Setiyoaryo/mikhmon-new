@@ -317,6 +317,27 @@ func (s *Store) DeleteInstance(id string) error {
 	return nil
 }
 
+// panelTanpaNama adalah nama bawaan untuk panel yang mendaftar tanpa menyebut
+// namanya sama sekali. Nama ini boleh diganti sendiri oleh panelnya begitu ia
+// melapor dari permintaan web yang membawa alamatnya.
+const panelTanpaNama = "Panel tanpa nama"
+
+// namaPanelBawaan melaporkan apakah sebuah nama masih nama bawaan, jadi masih
+// boleh dilengkapi panelnya sendiri. Nama yang dipilih manusia tidak pernah
+// ditimpa.
+func namaPanelBawaan(name string) bool {
+	return strings.TrimSpace(name) == "" || strings.EqualFold(strings.TrimSpace(name), panelTanpaNama)
+}
+
+// rapikanNamaPanel menyiapkan nama panel dari laporan panelnya.
+func rapikanNamaPanel(name string) string {
+	name = strings.TrimSpace(name)
+	if len(name) > 120 {
+		name = name[:120]
+	}
+	return name
+}
+
 // EnrollInstance mendaftarkan pemasangan panel yang baru memasang dirinya.
 //
 // Dipakai supaya tidak ada berkas yang harus diisi tangan di sisi panel:
@@ -324,12 +345,9 @@ func (s *Store) DeleteInstance(id string) error {
 // itu disimpan panel sendiri. Dijalankan berulang aman - nama yang sama akan
 // mengembalikan instance yang sudah ada, bukan membuat yang kedua.
 func (s *Store) EnrollInstance(host, version string) (Instance, error) {
-	name := strings.TrimSpace(host)
+	name := rapikanNamaPanel(host)
 	if name == "" {
-		name = "Panel tanpa nama"
-	}
-	if len(name) > 120 {
-		name = name[:120]
+		name = panelTanpaNama
 	}
 
 	// Sudah pernah mendaftar dengan nama yang sama?
@@ -364,6 +382,43 @@ func (s *Store) EnrollInstance(host, version string) (Instance, error) {
 	}
 	_ = s.LogEvent("Panel " + inst.Name + " mendaftar sendiri.")
 	return inst, nil
+}
+
+/*
+ * NameInstance melengkapi nama panel dari laporan heartbeat-nya.
+ *
+ * Kenapa perlu: panel yang mendaftar sendiri lewat baris perintah tidak punya
+ * alamat web (HTTP_HOST kosong), jadi namanya jatuh ke "Panel tanpa nama" -
+ * pemilik portal lalu melihat dua panel dan tidak tahu mana yang benar. Laporan
+ * heartbeat berikutnya datang dari browser, yang tentu tahu alamatnya sendiri,
+ * jadi namanya bisa dilengkapi tanpa perlu ada yang mengisi apa pun.
+ *
+ * Nama yang sudah dipilih manusia TIDAK pernah ditimpa: fungsi ini hanya bekerja
+ * selagi namanya masih nama bawaan.
+ */
+func (s *Store) NameInstance(id, name string) (bool, error) {
+	name = rapikanNamaPanel(name)
+	if name == "" {
+		return false, nil
+	}
+
+	var sekarang string
+	err := s.db.QueryRow(`SELECT name FROM instances WHERE id = ?`, id).Scan(&sekarang)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+	if !namaPanelBawaan(sekarang) || strings.EqualFold(sekarang, name) {
+		return false, nil
+	}
+
+	if _, err := s.db.Exec(`UPDATE instances SET name = ? WHERE id = ?`, name, id); err != nil {
+		return false, err
+	}
+	_ = s.LogEvent(fmt.Sprintf("Panel yang belum bernama sekarang bernama %s.", name))
+	return true, nil
 }
 
 /* ------------------------------------------------------------------ paket */

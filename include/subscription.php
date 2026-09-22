@@ -264,9 +264,21 @@ function mikhmon_instance_enroll() {
     return $data;
   }
 
+  /*
+   * Dijalankan dari baris perintah (mis. lewat docker exec)? Permintaan seperti
+   * itu tidak punya alamat web, jadi panel ini akan terdaftar dengan nama
+   * "Panel tanpa nama" dan pemilik portal tidak bisa membedakannya dari panel
+   * lain. Pendaftarannya ditunda sampai ada permintaan dari browser; tidak ada
+   * yang perlu diisi tangan, hanya menunggu panelnya benar-benar dibuka.
+   */
+  $host = mikhmon_heartbeat_host();
+  if ($host === '') {
+    return $data;
+  }
+
   $balasan = mikhmon_heartbeat_http_post(
     $portal . '/api/v1/enroll',
-    array('host' => mikhmon_heartbeat_host(), 'version' => mikhmon_heartbeat_version()),
+    array('host' => $host, 'version' => mikhmon_heartbeat_version()),
     10
   );
   if (!is_array($balasan)
@@ -468,6 +480,13 @@ function mikhmon_heartbeat_refresh($force = false) {
   $tenant = mikhmon_heartbeat_tenant();
   if ($tenant !== '') {
     $payload['tenant'] = $tenant;
+  }
+  /* Alamat panel ini sendiri. Portal memakainya hanya untuk melengkapi nama
+   * panel yang masih "Panel tanpa nama" - supaya pemilik portal tidak melihat
+   * dua panel tanpa bisa membedakan mana yang benar. */
+  $host = mikhmon_heartbeat_host();
+  if ($host !== '') {
+    $payload['host'] = $host;
   }
   $url = $inst['portal'] . '/api/v1/heartbeat';
 
