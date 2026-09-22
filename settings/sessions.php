@@ -20,6 +20,21 @@
 error_reporting(0);
 /* Daftar sesi router: satu berkas per pelanggan (include/sessions/<nama>.php). */
 include_once(dirname(__FILE__) . '/../include/sessions.php');
+
+/*
+ * true kalau halaman ini dilayani di <nama>.nocify.id, yaitu panel milik
+ * pelanggan. Dipakai untuk menyembunyikan pengaturan akun admin: akun itu
+ * global (satu password untuk semua panel di VPS ini), jadi di panel pelanggan
+ * isinya bukan hanya tidak berguna, tapi juga membocorkan password panel
+ * pelanggan lain - dan menyimpannya dari situ akan mengubah password mereka
+ * semua sekaligus. Dijaga function_exists supaya panel lama yang belum punya
+ * include/tenant.php tetap jalan.
+ */
+if (!function_exists('mikhmon_panel_pelanggan')) {
+  function mikhmon_panel_pelanggan() {
+    return function_exists('mikhmon_tenant_locked') ? mikhmon_tenant_locked() : false;
+  }
+}
 if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
@@ -28,6 +43,16 @@ if (!isset($_SESSION["mikhmon"])) {
   $color = array('1' => 'bg-blue', 'bg-indigo', 'bg-purple', 'bg-pink', 'bg-red', 'bg-yellow', 'bg-green', 'bg-teal', 'bg-cyan', 'bg-grey', 'bg-light-blue');
 
   if (isset($_POST['save'])) {
+    /*
+     * Akun admin itu global: satu password untuk semua panel di VPS ini.
+     * Kalau form ini dilayani di <nama>.nocify.id, pelanggan bisa MEMBACA
+     * password itu - dan menyimpannya berarti mengganti password panel semua
+     * pelanggan sekaligus, termasuk mengunci mereka keluar. Karena itu formnya
+     * tidak ditampilkan di subdomain pelanggan, dan simpanannya juga ditolak di
+     * sini: menyembunyikan form saja tidak cukup, kiriman POST yang dibuat
+     * sendiri tetap sampai ke sini.
+     */
+    if (!mikhmon_panel_pelanggan()) {
 
     // The username lands inside a single-quoted PHP string in include/config.php,
     // so a quote in it would break config.php and blank the whole UI. The
@@ -67,6 +92,7 @@ if (!isset($_SESSION["mikhmon"])) {
       @unlink($tmp);
     }
     echo "<script>window.location='./admin.php?id=sessions'</script>";
+    }
   }
 
 }
@@ -145,6 +171,7 @@ if (!isset($_SESSION["mikhmon"])) {
             </div>
           </div>
         </div>
+          <?php if (!mikhmon_panel_pelanggan()) { ?>
 			    <div class="col-6">
           <form autocomplete="off" method="post" action="">
             <div class="card">
@@ -200,6 +227,7 @@ if (!isset($_SESSION["mikhmon"])) {
     </div>
     </form>
   </div>
+          <?php } ?>
 </div>
 </div>
 </div>
