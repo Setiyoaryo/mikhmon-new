@@ -123,8 +123,17 @@ $_system_scheduler = "Scheduler";
 $_system = "System";
 $_template_editor = "Template Editor";
 $_theme = "Theme";
-$_this_month = "This month";
 $_time_limit = "Time Limit";
+$_time_limit_help = "Limit total cumulative active uptime. Leave blank if expiration is based on Profile Validity only.";
+$_status = "Status";
+$_all = "All";
+$_ready_stock = "Ready / Stock";
+$_in_use = "Active / In-Use";
+$_expired = "Expired";
+$_member = "Member";
+$_batch_code = "Batch Code";
+$_batch_summary = "Voucher Batch Summary";
+$_total_generated = "Total Generated";
 $_time = "Time";
 $_today = "Today";
 $_total = "Total";
@@ -156,12 +165,14 @@ $_yes = "Yes";
 
 //details
 $_format_time_limit = '
-    Format '.$_time_limit.'.<br>
-    [wdhm] Example : 30d = 30'.$_days.', 12h = 12'.$_hours.', 4w3d = 31'.$_days.'.
+    Format '.$_time_limit.' (Limit Uptime).<br>
+    [wdhm] Example : 30d = 30'.$_days.', 12h = 12'.$_hours.', 30m = 30'.$_minutes.'.<br>
+    Leave blank if the voucher expiration is governed solely by '.$_validity.'.
 ';
 $_details_add_user = '
-    '.$_add_user.' with '.$_time_limit.'.<br>
-    Should '.$_time_limit.' < '.$_validity.'.
+    '.$_add_user.' with '.$_time_limit.' (Limit Uptime) vs '.$_validity.':<br>
+    - '.$_time_limit.': Cumulative active session duration (counted while user is connected).<br>
+    - '.$_validity.': Calendar expiration time from first login (set in Profile).
 ';
 
 $_details_user_profile = '

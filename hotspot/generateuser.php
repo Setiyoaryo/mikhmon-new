@@ -27,7 +27,7 @@ if (!isset($_SESSION["mikhmon"])) {
 	header("Location:../admin.php?id=login");
 } else {
 // time zone
-date_default_timezone_set($_SESSION['timezone']);
+date_default_timezone_set(empty($_SESSION['timezone']) ? 'Asia/Jakarta' : $_SESSION['timezone']);
 
 	$genprof = $_GET['genprof'];
 	if ($genprof != "") {
@@ -71,15 +71,13 @@ date_default_timezone_set($_SESSION['timezone']);
 		$prefix = ($_POST['prefix']);
 		$char = ($_POST['char']);
 		$profile = ($_POST['profile']);
-		$timelimit = ($_POST['timelimit']);
+		$timelimit = trim($_POST['timelimit']);
+		if ($timelimit == "0") {
+			$timelimit = "";
+		}
 		$datalimit = ($_POST['datalimit']);
 		$adcomment = ($_POST['adcomment']);
 		$mbgb = ($_POST['mbgb']);
-		if ($timelimit == "") {
-			$timelimit = "0";
-		} else {
-			$timelimit = $timelimit;
-		}
 		if ($datalimit == "") {
 			$datalimit = "0";
 		} else {
@@ -110,7 +108,12 @@ date_default_timezone_set($_SESSION['timezone']);
 		$_SESSION['ubp'] = $profile;
 		$commt = $user . "-" . rand(100, 999) . "-" . date("m.d.y") . "-" . $adcomment;
 		include_once(dirname(__FILE__) . '/../include/voucherharga.php');
-		mikhmon_voucher_harga_put($commt, array('price' => $getprice, 'sprice' => $getsprice));
+		mikhmon_voucher_harga_put($commt, array(
+			'price'   => $getprice,
+			'sprice'  => $getsprice,
+			'profile' => $profile,
+			'qty'     => $qty,
+		));
 		$gentemp = $commt . "|~" . $profile . "~" . $getvalid . "~" . $getprice . "!".$getsprice."~" . $timelimit . "~" . $datalimit . "~" . $getlock;
 		$gen = '<?php $genu="'.encrypt($gentemp).'";?>';
 		$temp = './voucher/temp.php';
@@ -166,15 +169,18 @@ date_default_timezone_set($_SESSION['timezone']);
 				if (!isset($u[$i]) || $u[$i] === "") {
 					continue;
 				}
-				$bulkusers[] = array(
+				$u_row = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
 					"password" => "$p[$i]",
 					"profile" => "$profile",
-					"limit-uptime" => "$timelimit",
 					"limit-bytes-total" => "$datalimit",
 					"comment" => "$commt",
 				);
+				if ($timelimit !== "") {
+					$u_row["limit-uptime"] = $timelimit;
+				}
+				$bulkusers[] = $u_row;
 			}
 			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
 		}
@@ -244,15 +250,18 @@ date_default_timezone_set($_SESSION['timezone']);
 				if (!isset($u[$i]) || $u[$i] === "") {
 					continue;
 				}
-				$bulkusers[] = array(
+				$u_row = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
 					"password" => "$u[$i]",
 					"profile" => "$profile",
-					"limit-uptime" => "$timelimit",
 					"limit-bytes-total" => "$datalimit",
 					"comment" => "$commt",
 				);
+				if ($timelimit !== "") {
+					$u_row["limit-uptime"] = $timelimit;
+				}
+				$bulkusers[] = $u_row;
 			}
 			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
 		}
@@ -446,7 +455,11 @@ date_default_timezone_set($_SESSION['timezone']);
 		</td>
 	</tr>
 	<tr>
-    <td class="align-middle"><?= $_time_limit ?></td><td><input class="form-control " type="text" size="4" autocomplete="off" name="timelimit" value=""></td>
+    <td class="align-middle"><?= $_time_limit ?></td>
+    <td>
+      <input class="form-control" type="text" size="4" autocomplete="off" name="timelimit" value="" placeholder="e.g. 1h, 30m" title="<?= isset($_time_limit_help) ? $_time_limit_help : '' ?>">
+      <small style="color:#777;"><i class="fa fa-info-circle"></i> <?= isset($_time_limit_help) ? $_time_limit_help : '' ?></small>
+    </td>
   </tr>
 	<tr>
     <td class="align-middle"><?= $_data_limit ?></td><td>

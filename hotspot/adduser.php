@@ -35,11 +35,9 @@ if (!isset($_SESSION["mikhmon"])) {
     $datalimit = ($_POST['datalimit']);
     $comment = ($_POST['comment']);
     $chkvalid = ($_POST['valid']);
-    $mbgb = ($_POST['mbgb']);
-    if ($timelimit == "") {
-      $timelimit = "0";
-    } else {
-      $timelimit = $timelimit;
+    $timelimit = trim((string)$_POST['timelimit']);
+    if ($timelimit == "0") {
+      $timelimit = "";
     }
     if ($datalimit == "") {
       $datalimit = "0";
@@ -54,16 +52,19 @@ if (!isset($_SESSION["mikhmon"])) {
     
       $comment = $usermode.$comment;
     
-    $API->comm("/ip/hotspot/user/add", array(
+    $user_add_data = array(
       "server" => "$server",
       "name" => "$name",
       "password" => "$password",
       "profile" => "$profile",
       "disabled" => "no",
-      "limit-uptime" => "$timelimit",
       "limit-bytes-total" => "$datalimit",
       "comment" => "$comment",
-    ));
+    );
+    if ($timelimit !== "") {
+      $user_add_data["limit-uptime"] = $timelimit;
+    }
+    $API->comm("/ip/hotspot/user/add", $user_add_data);
     $getuser = $API->comm("/ip/hotspot/user/print", array(
       "?name" => "$name",
     ));
@@ -142,7 +143,11 @@ if (!isset($_SESSION["mikhmon"])) {
 		</td>
 	</tr>
 	<tr>
-    <td class="align-middle"><?= $_time_limit ?></td><td><input class="form-control" type="text"  autocomplete="off" name="timelimit" value=""></td>
+    <td class="align-middle"><?= $_time_limit ?></td>
+    <td>
+      <input class="form-control" type="text" autocomplete="off" name="timelimit" value="" placeholder="e.g. 1h, 30m" title="<?= isset($_time_limit_help) ? $_time_limit_help : '' ?>">
+      <small style="color:#777;"><i class="fa fa-info-circle"></i> <?= isset($_time_limit_help) ? $_time_limit_help : '' ?></small>
+    </td>
   </tr>
   <tr>
     <td class="align-middle"><?= $_data_limit ?></td><td>

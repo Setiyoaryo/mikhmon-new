@@ -123,8 +123,17 @@ $_system_scheduler = "Jadwal";
 $_system = "Sistem";
 $_template_editor = "Ubah Templat";
 $_theme = "Tema";
-$_this_month = "Bulan ini";
 $_time_limit = "Batas Waktu";
+$_time_limit_help = "Batas total akumulasi waktu pemakaian (uptime). Kosongkan jika pembatasan hanya berdasarkan Masa Aktif kalender (Validity).";
+$_status = "Status";
+$_all = "Semua";
+$_ready_stock = "Ready / Stok";
+$_in_use = "Active / In-Use";
+$_expired = "Expired";
+$_member = "Member";
+$_batch_code = "Kode Batch";
+$_batch_summary = "Ringkasan Batch Voucher";
+$_total_generated = "Total Dibuat";
 $_time = "Waktu";
 $_today = "Hari ini";
 $_total = "Total";
@@ -156,12 +165,14 @@ $_yes = "Ya";
 
 //details
 $_format_time_limit = '
-    Format '.$_time_limit.'.<br>
-    [wdhm] Contoh : 30d = 30'.$_days.', 12h = 12'.$_hours.', 4w3d = 31'.$_days.'.
+    Format '.$_time_limit.' (Limit Uptime).<br>
+    [wdhm] Contoh : 30d = 30'.$_days.', 12h = 12'.$_hours.', 30m = 30'.$_minutes.'.<br>
+    Kosongkan jika voucher hanya dibatasi oleh '.$_validity.' (Validity).
 ';
 $_details_add_user = '
-    '.$_add_user.' dengan '.$_time_limit.'.<br>
-    Sebaiknya '.$_time_limit.' < '.$_validity.'.
+    '.$_add_user.' dengan '.$_time_limit.' (Limit Uptime) vs '.$_validity.' (Masa Aktif):<br>
+    - '.$_time_limit.': Kuota durasi pemakaian aktif (dihitung saat user terkoneksi).<br>
+    - '.$_validity.': Masa berlaku kalender sejak login pertama (diset di Profil).
 ';
 
 $_details_user_profile = '

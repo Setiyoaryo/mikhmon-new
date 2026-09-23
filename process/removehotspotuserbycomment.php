@@ -29,13 +29,16 @@ $result = mikhmon_bulk_remove_by_query($API, array(
   "uptime"  => "00:00:00",
 ));
 
+include_once(dirname(__FILE__) . '/../include/voucherharga.php');
+mikhmon_voucher_harga_del($removehotspotuserbycomment);
+
 // Land back on the batch's own profile list, as before.
 $_SESSION['ubp'] = isset($result['profile']) && $result['profile'] != "" ? $result['profile'] : "";
 $_SESSION['ubc'] = "";
 if ($_SESSION['ubp'] != "") {
-  echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "'</script>";
+  echo "<script>window.location='./?hotspot=users&profile=" . $_SESSION['ubp'] . "&session=" . $session . "';</script>";
 } else {
-  echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "'</script>";
+  echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "';</script>";
 }
 
 ?>

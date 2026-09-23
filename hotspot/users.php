@@ -40,32 +40,113 @@ if (!isset($_SESSION["mikhmon"])) {
    */
   include_once(dirname(__FILE__) . '/../include/hscache.php');
   $semuauser = mikhmon_hscache_hotspot_users($API, $session);
+  if (!is_array($semuauser)) {
+    $semuauser = array();
+  }
 
-  $exp = $_GET['exp'];
-  if ($exp != "") {
-    /* Hanya user yang masa pakainya sudah habis (limit-uptime 1s). */
-    $getuser = array();
-    foreach ($semuauser as $u) {
-      if (isset($u['limit-uptime']) && $u['limit-uptime'] === '1s') {
-        $getuser[] = $u;
+  $exp = isset($_GET['exp']) ? $_GET['exp'] : '';
+  $status = isset($_GET['status']) ? trim($_GET['status']) : '';
+  if ($exp == "1" && $status == "") {
+    $status = "expired";
+  }
+
+  $user_status_fn = function ($u) {
+    $limituptime = isset($u['limit-uptime']) ? (string)$u['limit-uptime'] : '';
+    $uptime = isset($u['uptime']) ? (string)$u['uptime'] : '';
+    $comment = isset($u['comment']) ? (string)$u['comment'] : '';
+    $bytesin = isset($u['bytes-in']) ? (int)$u['bytes-in'] : 0;
+    $bytesout = isset($u['bytes-out']) ? (int)$u['bytes-out'] : 0;
+    $profile = isset($u['profile']) ? strtolower((string)$u['profile']) : '';
+    $name = isset($u['name']) ? (string)$u['name'] : '';
+    $pass = isset($u['password']) ? (string)$u['password'] : '';
+
+    if ($limituptime === '1s') {
+      return 'expired';
+    }
+
+    // Uptime limit exhausted (e.g. limit-uptime reached)
+    if ($limituptime !== '' && $uptime !== '' && $limituptime === $uptime && $limituptime !== '0s') {
+      return 'expired';
+    }
+
+    $isBatchVc = (substr($comment, 0, 3) === 'vc-' || substr($comment, 0, 3) === 'up-');
+    $isExpComment = false;
+    $expTime = 0;
+    if (preg_match('/^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d{2})\/\d{2}/i', $comment)) {
+      $isExpComment = true;
+      $parsed = strtotime(str_replace('/', ' ', $comment));
+      if ($parsed !== false) {
+        $expTime = $parsed;
       }
     }
-  } elseif ($comm != "") {
-    $getuser = array();
+
+    if ($expTime > 0 && $expTime <= time()) {
+      return 'expired';
+    }
+
+    if (strpos($profile, 'member') !== false || strpos(strtolower($comment), 'member') !== false) {
+      return 'member';
+    }
+
+    if (!$isBatchVc && !$isExpComment && $name !== 'default-trial') {
+      if ($name !== $pass || (strpos($comment, 'vc-') === false && strpos($comment, 'up-') === false && $comment !== '')) {
+        return 'member';
+      }
+    }
+
+    $hasUptime = ($uptime !== '' && $uptime !== '0s' && $uptime !== '00:00:00');
+    $hasTraffic = ($bytesin > 0 || $bytesout > 0);
+    if ($hasUptime || $hasTraffic || ($expTime > time()) || $isExpComment) {
+      return 'active';
+    }
+
+    return 'ready';
+  };
+
+  // Base list filtered by profile or comment
+  if ($comm != "") {
+    $base_list = array();
     foreach ($semuauser as $u) {
       if (isset($u['comment']) && $u['comment'] === $comm) {
-        $getuser[] = $u;
+        $base_list[] = $u;
       }
     }
-  } elseif ($prof != "all") {
-    $getuser = array();
+  } elseif ($prof != "all" && $prof != "") {
+    $base_list = array();
     foreach ($semuauser as $u) {
       if (isset($u['profile']) && $u['profile'] === $prof) {
+        $base_list[] = $u;
+      }
+    }
+  } else {
+    $base_list = $semuauser;
+  }
+
+  // Count status tabs on base list
+  $status_counts = array(
+    'all'     => count($base_list),
+    'ready'   => 0,
+    'active'  => 0,
+    'expired' => 0,
+    'member'  => 0,
+  );
+  foreach ($base_list as $u) {
+    $st = $user_status_fn($u);
+    if (isset($status_counts[$st])) {
+      $status_counts[$st]++;
+    }
+  }
+
+  // Filter getuser by selected status tab
+  if ($status != "" && $status != "all") {
+    $getuser = array();
+    foreach ($base_list as $u) {
+      if ($user_status_fn($u) === $status) {
         $getuser[] = $u;
       }
     }
   } else {
-    $getuser = $semuauser;
+    $getuser = $base_list;
   }
 
   $TotalReg = count($getuser);
@@ -82,8 +163,8 @@ if (!isset($_SESSION["mikhmon"])) {
     <h3><i class="fa fa-users"></i> <?= $_users ?>
       <span style="font-size: 14px">
         <?php
-        if ($counttuser == 0) {
-          echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "</script>";
+        if ($prof != "all" && $prof != "" && $comm == "" && $status == "" && $counttuser == 0 && count($semuauser) > 0) {
+          echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "';</script>";
         } ?>
          &nbsp; | &nbsp; <a href="./?hotspot-user=add&session=<?= $session; ?>" title="Add User"><i class="fa fa-user-plus"></i> <?= $_add ?></a>
         &nbsp; | &nbsp; <a href="./?hotspot-user=generate&session=<?= $session; ?>" title="Generate User"><i class="fa fa-users"></i> <?= $_generate ?></a>
@@ -136,6 +217,37 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
 }
 ?>
 <div class="card-body">
+  <div class="row pd-b-5">
+    <div class="col-12">
+      <div style="display:flex; flex-wrap:wrap; gap:4px; align-items:center;">
+        <?php
+          $tab_base = "./?hotspot=users&session=" . $session;
+          if ($prof != "" && $prof != "all") {
+            $tab_base .= "&profile=" . urlencode($prof);
+          }
+          if ($comm != "") {
+            $tab_base .= "&comment=" . urlencode($comm);
+          }
+          $is_all = ($status == "" || $status == "all");
+        ?>
+        <a href="<?= $tab_base; ?>&status=all" class="btn <?= $is_all ? 'bg-primary' : 'bg-secondary'; ?>" style="margin:2px;" title="<?= $_all; ?>">
+          <i class="fa fa-users"></i> <?= $_all; ?> <span style="background:rgba(0,0,0,0.2); padding:1px 6px; border-radius:10px; font-size:12px; margin-left:3px;"><?= $status_counts['all']; ?></span>
+        </a>
+        <a href="<?= $tab_base; ?>&status=ready" class="btn <?= ($status == 'ready') ? 'bg-primary' : 'bg-secondary'; ?>" style="margin:2px;" title="<?= $_ready_stock; ?>">
+          <i class="fa fa-ticket"></i> <?= $_ready_stock; ?> <span style="background:rgba(0,0,0,0.2); padding:1px 6px; border-radius:10px; font-size:12px; margin-left:3px;"><?= $status_counts['ready']; ?></span>
+        </a>
+        <a href="<?= $tab_base; ?>&status=active" class="btn <?= ($status == 'active') ? 'bg-primary' : 'bg-secondary'; ?>" style="margin:2px;" title="<?= $_in_use; ?>">
+          <i class="fa fa-wifi"></i> <?= $_in_use; ?> <span style="background:rgba(0,0,0,0.2); padding:1px 6px; border-radius:10px; font-size:12px; margin-left:3px;"><?= $status_counts['active']; ?></span>
+        </a>
+        <a href="<?= $tab_base; ?>&status=expired" class="btn <?= ($status == 'expired') ? 'bg-primary' : 'bg-secondary'; ?>" style="margin:2px;" title="<?= $_expired; ?>">
+          <i class="fa fa-clock-o"></i> <?= $_expired; ?> <span style="background:rgba(0,0,0,0.2); padding:1px 6px; border-radius:10px; font-size:12px; margin-left:3px;"><?= $status_counts['expired']; ?></span>
+        </a>
+        <a href="<?= $tab_base; ?>&status=member" class="btn <?= ($status == 'member') ? 'bg-primary' : 'bg-secondary'; ?>" style="margin:2px;" title="<?= $_member; ?>">
+          <i class="fa fa-id-card-o"></i> <?= $_member; ?> <span style="background:rgba(0,0,0,0.2); padding:1px 6px; border-radius:10px; font-size:12px; margin-left:3px;"><?= $status_counts['member']; ?></span>
+        </a>
+      </div>
+    </div>
+  </div>
   <div class="row">
    <div class="col-6 pd-t-5 pd-b-5">
   <div class="input-group">
@@ -145,11 +257,12 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
     <div class="input-group-4 col-box-4">
       <select style="padding:5px;" class="group-item group-item-m" onchange="location = this.value; loader()" title="Filter by Profile">
         <option><?= $_profile ?> </option>
-        <option value="./?hotspot=users&profile=all&session=<?= $session; ?>"><?= $_show_all ?></option>
+        <option value="./?hotspot=users&profile=all&session=<?= $session . (($status != '' && $status != 'all') ? '&status=' . urlencode($status) : ''); ?>"><?= $_show_all ?></option>
       <?php
+      $st_param = ($status != '' && $status != 'all') ? '&status=' . urlencode($status) : '';
       for ($i = 0; $i < $TotalReg2; $i++) {
         $profile = $getprofile[$i];
-        echo "<option value='./?hotspot=users&profile=" . $profile['name'] . "&session=" . $session . "'>" . $profile['name'] . "</option>";
+        echo "<option value='./?hotspot=users&profile=" . $profile['name'] . "&session=" . $session . $st_param . "'>" . $profile['name'] . "</option>";
       }
       ?>
     </select>
@@ -162,6 +275,7 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
       echo "<option value=''>".$_comment."</option>";
     }
     $TotalReg = count($getuser);
+    $acomment = "";
     for ($i = 0; $i < $TotalReg; $i++) {
       $ucomment = $getuser[$i]['comment'];
       $uprofile = $getuser[$i]['profile'];
@@ -189,7 +303,7 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
   <div class="col-6">
     <?php if ($comm != "") { ?>
   <button class="btn bg-red" onclick="if(confirm('Are you sure to delete username by comment (<?= $comm; ?>)?')){loadpage('./?remove-hotspot-user-by-comment=<?= $comm; ?>&session=<?= $session; ?>');loader();}else{}" title="Remove user by comment <?= $comm; ?>">  <i class="fa fa-trash"></i> <?= $_by_comment ?></button>
-    <?php ; }else if ($exp == "1"){ ?>
+    <?php ; }else if ($exp == "1" || $status == "expired"){ ?>
   <button class="btn bg-red" onclick="if(confirm('Are you sure to delete users?')){loadpage('./?remove-hotspot-user-expired=1&session=<?= $session; ?>');loader();}else{}" title="Remove user expired">  <i class="fa fa-trash"></i> Expired Users</button>
       <?php } ?>
   <?php // Retention cleanup: deletes vouchers that were never used and whose
@@ -275,7 +389,9 @@ if ($prof != "") {
 if ($comm != "") {
   $pf_base .= "&comment=" . urlencode($comm);
 }
-if ($exp == "1") {
+if ($status != "" && $status != "all") {
+  $pf_base .= "&status=" . urlencode($status);
+} elseif ($exp == "1") {
   $pf_base .= "&exp=1";
 }
 $pf_base .= "&per=" . $pf_per;
@@ -342,12 +458,11 @@ for ($i = $pf_offset; $i < $pf_end; $i++) {
   }else{
     echo $ucomment.' ';
   }
-  echo  "</td>";
-
-
+  echo "</td>";
+  echo "</tr>";
 }
 ?>
-  </tr>
+  </tbody>
 </table>
 <?php if ($pf_pages > 1) { ?>
 <div class="row" style="margin-top:10px;">

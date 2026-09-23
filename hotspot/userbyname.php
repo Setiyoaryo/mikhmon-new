@@ -263,7 +263,7 @@ if ($currency == in_array($currency, $cekindo['indo'])) {
       "limit-bytes-total" => "$datalimit",
       "comment" => "$comment",
     ));
-    echo "<script>window.location='./?hotspot-user=" . $uid . "&session=" . $session . "'</script>";
+    echo "<script>window.location='./?hotspot-user=" . $uid . "&session=" . $session . "';</script>";
   }
 }
 include('./voucher/printbt.php');
@@ -395,7 +395,7 @@ include('./voucher/printbt.php');
     } ?>" disabled></td>
   </tr>
   <tr>
-    <td class="align-middle"><?= $_time_limit ?></td><td><input id="timelimit" class="form-control" type="text" size="4" autocomplete="off" name="timelimit" value="<?php if ($utimelimit == "1s") {echo "";} else {echo $utimelimit;} ?>"></td>
+    <td class="align-middle"><?= $_time_limit ?></td><td><input id="timelimit" class="form-control" type="text" size="4" autocomplete="off" name="timelimit" value="<?php if ($utimelimit == "1s") {echo "";} else {echo $utimelimit;} ?>" placeholder="e.g. 1h, 30m" title="<?= isset($_time_limit_help) ? $_time_limit_help : '' ?>"><small style="color:#777;"><i class="fa fa-info-circle"></i> <?= isset($_time_limit_help) ? $_time_limit_help : '' ?></small></td>
   </tr>
   <tr>
     <td class="align-middle"><?= $_data_limit ?></td><td>

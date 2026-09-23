@@ -26,9 +26,12 @@ if (!isset($_SESSION["mikhmon"])) {
 // get MikroTik system clock
   $getclock = $API->comm("/system/clock/print");
   $clock = $getclock[0];
-  $timezone = $getclock[0]['time-zone-name'];
+  $timezone = !empty($getclock[0]['time-zone-name']) ? $getclock[0]['time-zone-name'] : (empty($_SESSION['timezone']) ? 'Asia/Jakarta' : $_SESSION['timezone']);
+  if (!@date_default_timezone_set($timezone)) {
+    $timezone = 'Asia/Jakarta';
+    date_default_timezone_set('Asia/Jakarta');
+  }
   $_SESSION['timezone'] = $timezone;
-  date_default_timezone_set($timezone);
 
 // get system resource MikroTik
   $getresource = $API->comm("/system/resource/print");

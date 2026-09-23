@@ -105,9 +105,11 @@ if (!defined('MIKHMON_VOUCHER_HARGA_LOADED')) {
         $bersih[$bidang] = preg_replace('/[^0-9]/', '', $nilai);
       }
 
-      /* Tidak ada yang diisi? Perlakukan seperti dulu: harga dari profil. */
-      if ($bersih['price'] === '' && $bersih['sprice'] === '') {
-        return false;
+      if (isset($harga['profile'])) {
+        $bersih['profile'] = trim((string)$harga['profile']);
+      }
+      if (isset($harga['qty'])) {
+        $bersih['qty'] = (int)$harga['qty'];
       }
       $bersih['waktu'] = time();
 
@@ -136,6 +138,158 @@ if (!defined('MIKHMON_VOUCHER_HARGA_LOADED')) {
       }
       @unlink($tmp);
       return false;
+    }
+  }
+
+  /*
+   * Menghapus entri batch dari registry lokal (harga-batch.php) saat seluruh
+   * voucher dalam batch dihapus.
+   */
+  if (!function_exists('mikhmon_voucher_harga_del')) {
+    function mikhmon_voucher_harga_del($kunci)
+    {
+      $kunci = trim((string) $kunci);
+      if ($kunci === '') {
+        return false;
+      }
+      $semua = mikhmon_voucher_harga_all();
+      if (!is_array($semua) || !isset($semua[$kunci])) {
+        return true;
+      }
+      unset($semua[$kunci]);
+
+      $isi = "<?php\n"
+        . "/* Harga voucher per batch. Dibuat otomatis oleh halaman Generate; jangan di-commit. */\n"
+        . "if (isset(\$_SERVER['REQUEST_URI']) && substr(\$_SERVER['REQUEST_URI'], -17) == 'harga-batch.php') { header('Location:./'); };\n"
+        . "return " . var_export($semua, true) . ";\n";
+
+      $file = mikhmon_voucher_harga_file();
+      $tmp = $file . '.' . getmypid() . '.' . mt_rand(100000, 999999) . '.tmp';
+      if (@file_put_contents($tmp, $isi) === false) {
+        return false;
+      }
+      if (@rename($tmp, $file)) {
+        return true;
+      }
+      @unlink($tmp);
+      return false;
+    }
+  }
+
+  /*
+   * Mengambil ringkasan batch voucher untuk manajemen batch di hotspot.
+   * Menggabungkan catatan lokal (harga-batch.php) dengan data user di router.
+   */
+  if (!function_exists('mikhmon_get_batches_summary')) {
+    function mikhmon_get_batches_summary($API, $session)
+    {
+      include_once(dirname(__FILE__) . '/hscache.php');
+
+      $registry = mikhmon_voucher_harga_all();
+      $semuauser = mikhmon_hscache_hotspot_users($API, $session);
+
+      $batches = array();
+
+      // 1. Catatan yang ada di registry
+      if (is_array($registry)) {
+        foreach ($registry as $batchCode => $meta) {
+          if (!is_array($meta)) continue;
+          $batches[$batchCode] = array(
+            'code'    => $batchCode,
+            'profile' => isset($meta['profile']) ? (string)$meta['profile'] : '',
+            'total'   => isset($meta['qty']) ? (int)$meta['qty'] : 0,
+            'ready'   => 0,
+            'used'    => 0,
+            'price'   => isset($meta['price']) ? (string)$meta['price'] : '',
+            'sprice'  => isset($meta['sprice']) ? (string)$meta['sprice'] : '',
+            'time'    => isset($meta['waktu']) ? (int)$meta['waktu'] : 0,
+          );
+        }
+      }
+
+      // 2. Kumpulkan dari user di router (in-memory cache)
+      if (is_array($semuauser)) {
+        foreach ($semuauser as $u) {
+          $comment = isset($u['comment']) ? trim((string)$u['comment']) : '';
+          if ($comment === '') continue;
+
+          // Pola komentar batch voucher: vc-... atau up-...
+          $isBatch = (substr($comment, 0, 3) === 'vc-' || substr($comment, 0, 3) === 'up-');
+          if (!$isBatch) continue;
+
+          if (!isset($batches[$comment])) {
+            $batches[$comment] = array(
+              'code'    => $comment,
+              'profile' => isset($u['profile']) ? (string)$u['profile'] : '',
+              'total'   => 0,
+              'ready'   => 0,
+              'used'    => 0,
+              'price'   => '',
+              'sprice'  => '',
+              'time'    => 0,
+            );
+          }
+
+          $limituptime = isset($u['limit-uptime']) ? (string)$u['limit-uptime'] : '';
+          $uptime = isset($u['uptime']) ? (string)$u['uptime'] : '';
+          $bytesin = isset($u['bytes-in']) ? (int)$u['bytes-in'] : 0;
+          $bytesout = isset($u['bytes-out']) ? (int)$u['bytes-out'] : 0;
+
+          $isExpired = ($limituptime === '1s');
+          $hasUsage = ($uptime !== '' && $uptime !== '0s' && $uptime !== '00:00:00') || ($bytesin > 0 || $bytesout > 0);
+
+          if ($isExpired || $hasUsage) {
+            $batches[$comment]['used']++;
+          } else {
+            $batches[$comment]['ready']++;
+          }
+
+          if (empty($batches[$comment]['profile']) && !empty($u['profile'])) {
+            $batches[$comment]['profile'] = (string)$u['profile'];
+          }
+        }
+      }
+
+      // 3. Hitung total dan in-use
+      foreach ($batches as $k => &$b) {
+        $countedTotal = $b['ready'] + $b['used'];
+        if ($b['total'] > 0) {
+          $b['used'] = max($b['used'], $b['total'] - $b['ready']);
+          $b['total'] = max($b['total'], $countedTotal);
+        } else {
+          $b['total'] = $countedTotal;
+        }
+
+        // Jika waktu belum tercatat, ambil dari tanggal di nama batch (contoh: vc-735-09.22.26-kopian atau vc-735-09.22.2026)
+        if ($b['time'] === 0) {
+          $parts = explode('-', $b['code']);
+          foreach ($parts as $p) {
+            if (preg_match('/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})$/', $p, $m)) {
+              $m_num = (int)$m[1];
+              $d_num = (int)$m[2];
+              $y_num = (strlen($m[3]) === 2) ? (2000 + (int)$m[3]) : (int)$m[3];
+              $b['time'] = mktime(12, 0, 0, $m_num, $d_num, $y_num);
+              break;
+            }
+          }
+        }
+      }
+      unset($b);
+
+      // Saring batch yang tidak memiliki voucher sama sekali (total == 0)
+      $batches = array_filter($batches, function ($b) {
+        return (isset($b['total']) && $b['total'] > 0);
+      });
+
+      // Urutkan dari batch terbaru
+      uasort($batches, function ($a, $b) {
+        if ($a['time'] === $b['time']) {
+          return strcmp($b['code'], $a['code']);
+        }
+        return ($a['time'] > $b['time']) ? -1 : 1;
+      });
+
+      return $batches;
     }
   }
 }

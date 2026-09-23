@@ -46,7 +46,10 @@ if (!isset($_SESSION["mikhmon"])) {
   $_SESSION["connect"] = "";
 
 // time zone
-  date_default_timezone_set($_SESSION['timezone']);
+  if (empty($_SESSION['timezone']) || !@date_default_timezone_set($_SESSION['timezone'])) {
+    $_SESSION['timezone'] = 'Asia/Jakarta';
+    date_default_timezone_set('Asia/Jakarta');
+  }
 
 // lang
   include('./include/lang.php');

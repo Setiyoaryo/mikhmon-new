@@ -146,6 +146,10 @@ if (!function_exists('mikhmon_hscache_hotspot_users')) {
       return $simpan;
     }
 
+    if (!is_object($API)) {
+      return array();
+    }
+
     $hasil = $API->comm('/ip/hotspot/user/print');
     if (!is_array($hasil)) {
       $hasil = array();
