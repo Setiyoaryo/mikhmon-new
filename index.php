@@ -139,8 +139,8 @@ if (!isset($_SESSION["mikhmon"])) {
   $removepprofile = $_GET['remove-pprofile'];
   $removepactive = $_GET['remove-pactive'];
   $srv = $_GET['srv'];
-  $prof = $_GET['profile'];
-  $comm = $_GET['comment'];
+  $prof = isset($_GET['profile']) ? $_GET['profile'] : '';
+  $comm = isset($_GET['comment']) ? $_GET['comment'] : '';
   $serveractive = $_GET['server'];
   $report = $_GET['report'];
   $removereport = $_GET['remove-report'];
@@ -314,17 +314,17 @@ switch ($hotspot) {
     include_once('./hotspot/adduser.php');
   }
 
-// hotspot users
-  elseif ($hotspot == "users" && $prof == "all") {
-    $_SESSION['ubp'] = "";
+// hotspot users filter by comment
+  elseif ($hotspot == "users" && $comm != "") {
+    $_SESSION['ubc'] = $comm;
     $_SESSION['hua'] = "";
-    $_SESSION['ubc'] = "";
+    $_SESSION['ubp'] = "";
     $_SESSION['vcr'] = "";
     include_once('./hotspot/users.php');
   }
 
 // hotspot users filter by profile
-  elseif ($hotspot == "users" && $prof != "") {
+  elseif ($hotspot == "users" && $prof != "" && $prof != "all") {
     $_SESSION['ubp'] = $prof;
     $_SESSION['hua'] = "";
     $_SESSION['ubc'] = "";
@@ -332,11 +332,11 @@ switch ($hotspot) {
     include_once('./hotspot/users.php');
   }
 
-// hotspot users filter by comment
-  elseif ($hotspot == "users" && $comm != "") {
-    $_SESSION['ubc'] = $comm;
-    $_SESSION['hua'] = "";
+// hotspot users (all / by status / default)
+  elseif ($hotspot == "users") {
     $_SESSION['ubp'] = "";
+    $_SESSION['hua'] = "";
+    $_SESSION['ubc'] = "";
     $_SESSION['vcr'] = "";
     include_once('./hotspot/users.php');
   }

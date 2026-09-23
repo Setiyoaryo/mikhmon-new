@@ -131,6 +131,7 @@ $_ready_stock = "Disponible / Stock";
 $_in_use = "Activo / En uso";
 $_expired = "Expirado";
 $_member = "Miembro";
+$_no_users_found = "No se encontraron usuarios";
 $_batch_code = "Código de Lote";
 $_batch_summary = "Resumen de Lote de Vouchers";
 $_total_generated = "Total Generado";

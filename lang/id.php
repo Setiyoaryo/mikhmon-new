@@ -131,6 +131,7 @@ $_ready_stock = "Ready / Stok";
 $_in_use = "Active / In-Use";
 $_expired = "Expired";
 $_member = "Member";
+$_no_users_found = "Tidak ada user ditemukan";
 $_batch_code = "Kode Batch";
 $_batch_summary = "Ringkasan Batch Voucher";
 $_total_generated = "Total Dibuat";

@@ -189,8 +189,8 @@ $batch_count = count($batch_summary);
             echo "<td class='align-middle'>" . htmlspecialchars($b_prof, ENT_QUOTES) . "</td>";
             echo "<td class='align-middle'>" . $b_date . "</td>";
             echo "<td class='text-center align-middle'><b>" . number_format($b_total, 0, ",", ".") . "</b></td>";
-            echo "<td class='text-center align-middle'><span class='text-success' style='font-weight:bold;'>" . number_format($b_ready, 0, ",", ".") . "</span></td>";
-            echo "<td class='text-center align-middle'><span class='text-danger' style='font-weight:bold;'>" . number_format($b_used, 0, ",", ".") . "</span></td>";
+            echo "<td class='text-center align-middle'><a href='" . $view_url . "&status=ready' title='Filter batch ready'><span class='text-success' style='font-weight:bold;'>" . number_format($b_ready, 0, ",", ".") . "</span></a></td>";
+            echo "<td class='text-center align-middle'><a href='" . $view_url . "&status=active' title='Filter batch in-use'><span class='text-danger' style='font-weight:bold;'>" . number_format($b_used, 0, ",", ".") . "</span></a></td>";
             echo "<td class='text-right align-middle'>" . $b_price_disp . "</td>";
             echo "<td class='text-center align-middle'>";
             if ($b_ready === 0) {

@@ -131,6 +131,7 @@ $_ready_stock = "Ready / Stock";
 $_in_use = "Active / In-Use";
 $_expired = "Expired";
 $_member = "Member";
+$_no_users_found = "No users found";
 $_batch_code = "Batch Code";
 $_batch_summary = "Voucher Batch Summary";
 $_total_generated = "Total Generated";

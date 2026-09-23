@@ -131,6 +131,7 @@ $_ready_stock = "Hazır / Stok";
 $_in_use = "Aktif / Kullanımda";
 $_expired = "Süresi Dolmuş";
 $_member = "Üye";
+$_no_users_found = "Kullanıcı bulunamadı";
 $_batch_code = "Parti Kodu";
 $_batch_summary = "Kupon Parti Özeti";
 $_total_generated = "Toplam Oluşturulan";

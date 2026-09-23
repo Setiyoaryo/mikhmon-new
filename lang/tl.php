@@ -131,6 +131,7 @@ $_ready_stock = "Handa / Stock";
 $_in_use = "Aktibo / Ginagamit";
 $_expired = "Nag-expire";
 $_member = "Miyembro";
+$_no_users_found = "Walang nahanap na user";
 $_batch_code = "Batch Code";
 $_batch_summary = "Buod ng Batch ng Voucher";
 $_total_generated = "Kabuuang Nagawa";

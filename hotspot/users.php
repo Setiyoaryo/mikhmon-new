@@ -49,6 +49,8 @@ if (!isset($_SESSION["mikhmon"])) {
   if ($exp == "1" && $status == "") {
     $status = "expired";
   }
+  $prof = isset($_GET['profile']) ? trim($_GET['profile']) : (isset($prof) ? $prof : '');
+  $comm = isset($_GET['comment']) ? trim($_GET['comment']) : (isset($comm) ? $comm : '');
 
   $user_status_fn = function ($u) {
     $limituptime = isset($u['limit-uptime']) ? (string)$u['limit-uptime'] : '';
@@ -162,11 +164,7 @@ if (!isset($_SESSION["mikhmon"])) {
 <div class="card-header">
     <h3><i class="fa fa-users"></i> <?= $_users ?>
       <span style="font-size: 14px">
-        <?php
-        if ($prof != "all" && $prof != "" && $comm == "" && $status == "" && $counttuser == 0 && count($semuauser) > 0) {
-          echo "<script>window.location='./?hotspot=users&profile=all&session=" . $session . "';</script>";
-        } ?>
-         &nbsp; | &nbsp; <a href="./?hotspot-user=add&session=<?= $session; ?>" title="Add User"><i class="fa fa-user-plus"></i> <?= $_add ?></a>
+        <a href="./?hotspot-user=add&session=<?= $session; ?>" title="Add User"><i class="fa fa-user-plus"></i> <?= $_add ?></a>
         &nbsp; | &nbsp; <a href="./?hotspot-user=generate&session=<?= $session; ?>" title="Generate User"><i class="fa fa-users"></i> <?= $_generate ?></a>
          &nbsp; | &nbsp; <a href="<?= str_replace("=users", "=export-users", $url); ?>&export=script" title="Download User List as Mikrotik Script"><i class="fa fa-download"></i> Script</a>&nbsp; | &nbsp; <a href="<?= str_replace("=users", "=export-users", $url); ?>&export=csv" title="Download User List as CSV"><i class="fa fa-download"></i> CSV</a>
         </span>  &nbsp;
@@ -268,30 +266,32 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
     </select>
   </div>
   <div class="input-group-4 col-box-4">
-    <select style="padding:5px;" class="group-item group-item-r" id="comment" name="comment" onchange="location = './?hotspot=users&comment='+ this.value +'&session=<?= $session;?>';">
+    <select style="padding:5px;" class="group-item group-item-r" id="comment" name="comment" onchange="location = './?hotspot=users&comment='+ encodeURIComponent(this.value) +'&session=<?= $session;?><?= ($status != '' && $status != 'all') ? '&status=' . urlencode($status) : ''; ?>';">
+    <option value=""><?= $_comment ?></option>
     <?php
-    if ($comm != "") {
-    } else {
-      echo "<option value=''>".$_comment."</option>";
-    }
-    $TotalReg = count($getuser);
-    $acomment = "";
-    for ($i = 0; $i < $TotalReg; $i++) {
-      $ucomment = $getuser[$i]['comment'];
-      $uprofile = $getuser[$i]['profile'];
-      $acomment .= ",".$ucomment."#". $uprofile;
+    $acomment = array();
+    // Scope comments to current profile if selected, otherwise all users, so comment
+    // batches remain available and selectable even when on a filtered status or 0-count view.
+    $comment_source = ($prof != "" && $prof != "all")
+      ? array_filter($semuauser, function($u) use ($prof) { return isset($u['profile']) && $u['profile'] === $prof; })
+      : $semuauser;
+    foreach ($comment_source as $u) {
+      $ucomment = isset($u['comment']) ? (string)$u['comment'] : '';
+      $uprofile = isset($u['profile']) ? (string)$u['profile'] : '';
+      if ($ucomment !== '') {
+        $acomment[] = $ucomment . "#" . $uprofile;
+      }
     }
 
-    $ocomment=  explode(",",$acomment);
-    
-    $comments=array_count_values($ocomment) ;
-    foreach ($comments as $tcomment=>$value) {
-
+    $comments = array_count_values($acomment);
+    foreach ($comments as $tcomment => $value) {
       if (is_numeric(substr($tcomment, 3, 3))) {
-       
-        echo "<option value='" . explode("#",$tcomment)[0] . "' >". explode("#",$tcomment)[0]." ".explode("#",$tcomment)[1]. " [".$value. "]</option>";
-       }
- 
+        $parts = explode("#", $tcomment);
+        $c_name = isset($parts[0]) ? $parts[0] : '';
+        $c_prof = isset($parts[1]) ? $parts[1] : '';
+        $c_sel = ($comm !== '' && $comm === $c_name) ? " selected" : "";
+        echo "<option value='" . htmlspecialchars($c_name, ENT_QUOTES) . "'" . $c_sel . " >" . htmlspecialchars($c_name . " " . $c_prof, ENT_QUOTES) . " [" . $value . "]</option>";
+      }
     }
 
     ?>
@@ -328,7 +328,7 @@ if (isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_ge
       url = "./voucher/print.php?profile="+encodeURIComponent(prof)+"&"+a+"="+b+"&session=<?= $session; ?>";
     }
     if (url === ""){
-      <?php if ($currency == in_array($currency, $cekindo['indo'])) { ?>
+      <?php if (in_array($currency, $cekindo['indo'])) { ?>
       alert('Silakan pilih salah satu Comment atau Profile terlebih dulu!');
       <?php
     } else { ?>
@@ -383,7 +383,7 @@ $pf_end = min($pf_offset + $pf_per, $TotalReg);
 
 // Page links keep whichever filter brought the user here.
 $pf_base = "./?hotspot=users&session=" . $session;
-if ($prof != "") {
+if ($prof != "" && $prof != "all") {
   $pf_base .= "&profile=" . urlencode($prof);
 }
 if ($comm != "") {
@@ -396,27 +396,31 @@ if ($status != "" && $status != "all") {
 }
 $pf_base .= "&per=" . $pf_per;
 
+if ($counttuser == 0) {
+  $no_users_msg = isset($_no_users_found) ? $_no_users_found : "No users found";
+  echo "<tr><td colspan='10' class='text-center text-muted pd-t-20 pd-b-20'><i class='fa fa-info-circle'></i> " . htmlspecialchars($no_users_msg, ENT_QUOTES) . "</td></tr>";
+} else {
 for ($i = $pf_offset; $i < $pf_end; $i++) {
   $userdetails = $getuser[$i];
-  $uid = $userdetails['.id'];
-  $userver = $userdetails['server'];
-  $uname = $userdetails['name'];
-  $upass = $userdetails['password'];
-  $uprofile = $userdetails['profile'];
-  $umacadd = $userdetails['mac-address'];
-  $uuptime = formatDTM($userdetails['uptime']);
-  $ubytesi = formatBytes($userdetails['bytes-in'], 2);
-  $ubyteso = formatBytes($userdetails['bytes-out'], 2);
+  $uid = isset($userdetails['.id']) ? $userdetails['.id'] : '';
+  $userver = isset($userdetails['server']) ? $userdetails['server'] : '';
+  $uname = isset($userdetails['name']) ? $userdetails['name'] : '';
+  $upass = isset($userdetails['password']) ? $userdetails['password'] : '';
+  $uprofile = isset($userdetails['profile']) ? $userdetails['profile'] : '';
+  $umacadd = isset($userdetails['mac-address']) ? $userdetails['mac-address'] : '';
+  $uuptime = isset($userdetails['uptime']) ? formatDTM($userdetails['uptime']) : '';
+  $ubytesi = isset($userdetails['bytes-in']) ? formatBytes($userdetails['bytes-in'], 2) : '0';
+  $ubyteso = isset($userdetails['bytes-out']) ? formatBytes($userdetails['bytes-out'], 2) : '0';
 
-  $ucomment = $userdetails['comment'];
-  $udisabled = $userdetails['disabled'];
-  $utimelimit = $userdetails['limit-uptime'];
+  $ucomment = isset($userdetails['comment']) ? $userdetails['comment'] : '';
+  $udisabled = isset($userdetails['disabled']) ? $userdetails['disabled'] : '';
+  $utimelimit = isset($userdetails['limit-uptime']) ? $userdetails['limit-uptime'] : '';
   if ($utimelimit == '1s') {
     $utimelimit = ' expired';
   } else {
     $utimelimit = ' ' . $utimelimit;
   }
-  $udatalimit = $userdetails['limit-bytes-total'];
+  $udatalimit = isset($userdetails['limit-bytes-total']) ? $userdetails['limit-bytes-total'] : '';
   if ($udatalimit == '') {
     $udatalimit = '';
   } else {
@@ -452,14 +456,15 @@ for ($i = $pf_offset; $i < $pf_end; $i++) {
   echo "<td>";
   if ($uname == "default-trial") {
   } else if (substr($ucomment,0,3) == "vc-" || substr($ucomment,0,3) == "up-") {
-    echo "<a href=./?hotspot=users&comment=" . $ucomment . "&session=" . $session . " title='Filter by " . $ucomment . "'><i class='fa fa-search'></i> ". $ucomment." ". $udatalimit ." ".$utimelimit . "</a>";
+    echo "<a href='./?hotspot=users&comment=" . urlencode($ucomment) . "&session=" . $session . "' title='Filter by " . htmlspecialchars($ucomment, ENT_QUOTES) . "'><i class='fa fa-search'></i> " . htmlspecialchars($ucomment . " " . $udatalimit . " " . $utimelimit, ENT_QUOTES) . "</a>";
   } else if ($utimelimit == ' expired') {
-    echo "<a href=./?hotspot=users&profile=all&exp=1&session=" . $session . " title='Filter by expired'><i class='fa fa-search'></i> " . $ucomment." ". $udatalimit ." ".$utimelimit . "</a>";
+    echo "<a href='./?hotspot=users&status=expired&session=" . $session . "' title='Filter by expired'><i class='fa fa-search'></i> " . htmlspecialchars($ucomment . " " . $udatalimit . " " . $utimelimit, ENT_QUOTES) . "</a>";
   }else{
     echo $ucomment.' ';
   }
   echo "</td>";
   echo "</tr>";
+}
 }
 ?>
   </tbody>
