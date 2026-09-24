@@ -1,0 +1,76 @@
+# Staging stack for Mikhmon on the same VPS, behind Traefik (proxy network).
+# Isolated from production (separate directory, separate containers, separate domains).
+#
+#   docker compose -f docker-compose.staging.yml up -d --build
+
+services:
+  mikhmon-staging-php:
+    build:
+      context: .
+      dockerfile: Dockerfile.php
+    container_name: mikhmon-staging-php
+    restart: unless-stopped
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx.default.conf:/etc/nginx/http.d/default.conf:ro
+    environment:
+      MIKHMON_API_URL: "http://mikhmon-staging-api:8088"
+      MIKHMON_PORTAL_URL: "${PORTAL_BASE_URL:-https://control.nocify.id}"
+      MIKHMON_TENANT_DOMAIN: "staging.nocify.id"
+      MIKHMON_HSCACHE_TTL: "300"
+    depends_on:
+      - mikhmon-staging-api
+    networks:
+      - proxy
+      - mikhmon-staging-internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      # HTTPS router untuk staging.nocify.id dan semua tenant *.staging.nocify.id
+      - "traefik.http.routers.mikhmon-staging.rule=Host(`staging.nocify.id`) || HostRegexp(`^[a-z0-9-]+\\.staging\\.nocify\\.id$$`)"
+      - "traefik.http.routers.mikhmon-staging.priority=60"
+      - "traefik.http.routers.mikhmon-staging.entrypoints=websecure"
+      - "traefik.http.routers.mikhmon-staging.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.mikhmon-staging.service=mikhmon-staging"
+      - "traefik.http.services.mikhmon-staging.loadbalancer.server.port=80"
+      # HTTP -> HTTPS redirect
+      - "traefik.http.routers.mikhmon-staging-web.rule=Host(`staging.nocify.id`) || HostRegexp(`^[a-z0-9-]+\\.staging\\.nocify\\.id$$`)"
+      - "traefik.http.routers.mikhmon-staging-web.priority=60"
+      - "traefik.http.routers.mikhmon-staging-web.entrypoints=web"
+      - "traefik.http.routers.mikhmon-staging-web.middlewares=mikhmon-staging-redirect"
+      - "traefik.http.middlewares.mikhmon-staging-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.mikhmon-staging-redirect.redirectscheme.permanent=true"
+
+  mikhmon-staging-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mikhmon-staging-api
+    restart: unless-stopped
+    environment:
+      MIKHMON_API_ADDR: ":8088"
+      MIKHMON_API_MAX_CONN_PER_ROUTER: "16"
+      MIKHMON_API_IDLE_TIMEOUT: "600s"
+    expose:
+      - "8088"
+    networks:
+      - mikhmon-staging-internal
+
+  # Router tiruan bawaan khusus staging agar bisa tes tanpa router fisik
+  mikhmon-staging-mock:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mikhmon-staging-mock
+    restart: unless-stopped
+    command: ["/mockrouteros", "-addr", "0.0.0.0:8728", "-user", "admin", "-pass", "admin"]
+    expose:
+      - "8728"
+    networks:
+      - mikhmon-staging-internal
+
+networks:
+  proxy:
+    external: true
+  mikhmon-staging-internal:
+    driver: bridge

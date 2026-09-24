@@ -23,7 +23,12 @@ define('MIKHMON_TENANT_LOADED', 1);
 
 /* Domain induk tempat panel di-host. */
 if (!defined('MIKHMON_TENANT_DOMAIN')) {
-  define('MIKHMON_TENANT_DOMAIN', 'nocify.id');
+  $envDomain = getenv('MIKHMON_TENANT_DOMAIN');
+  if (is_string($envDomain) && trim($envDomain) !== '') {
+    define('MIKHMON_TENANT_DOMAIN', trim($envDomain));
+  } else {
+    define('MIKHMON_TENANT_DOMAIN', 'nocify.id');
+  }
 }
 
 /* Subdomain yang bukan milik pelanggan. */
