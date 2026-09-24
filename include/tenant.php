@@ -113,15 +113,33 @@ function mikhmon_tenant_dir($tenant = '') {
   return dirname(__FILE__) . '/../data/tenants/' . $clean;
 }
 
-/* Mencari berkas kustom milik tenant (misal: login.php, logo.png, template.php) */
+/* Mencari berkas kustom milik tenant di custom-templates/ atau data/tenants/ */
 function mikhmon_tenant_file($path, $tenant = '') {
-  $dir = mikhmon_tenant_dir($tenant);
-  if ($dir === '') {
+  if ($tenant === '') {
+    $tenant = mikhmon_tenant_session();
+  }
+  if ($tenant === '') {
+    return '';
+  }
+  $clean = preg_replace('/[^a-z0-9_-]/', '', strtolower($tenant));
+  if ($clean === '') {
     return '';
   }
   $cleanPath = ltrim(preg_replace('/\.\.+/', '', (string) $path), '/');
-  $file = $dir . '/' . $cleanPath;
-  return is_file($file) ? $file : '';
+
+  // 1. Cek folder custom-templates/<tenant>/ (dikelola via Git / CI-CD)
+  $repoFile = dirname(__FILE__) . '/../custom-templates/' . $clean . '/' . $cleanPath;
+  if (is_file($repoFile)) {
+    return $repoFile;
+  }
+
+  // 2. Cek folder data/tenants/<tenant>/ (local override jika ada)
+  $localFile = dirname(__FILE__) . '/../data/tenants/' . $clean . '/' . $cleanPath;
+  if (is_file($localFile)) {
+    return $localFile;
+  }
+
+  return '';
 }
 
 /* Kredensial admin khusus tenant jika dikonfigurasi di data/tenants/<nama>/admin.php */

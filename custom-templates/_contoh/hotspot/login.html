@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login WiFi Hotspot</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="card">
+    <h2>Selamat Datang di WiFi</h2>
+    <p>Silakan masukkan kode voucher untuk mulai browsing internet.</p>
+    <form name="login" action="$(link-login-only)" method="post">
+      <input type="hidden" name="dst" value="$(link-orig)">
+      <input type="hidden" name="popup" value="true">
+      <input class="input" type="text" name="username" placeholder="Kode Voucher" autofocus required>
+      <input class="input" type="password" name="password" placeholder="Password (opsional)">
+      <button class="btn" type="submit">Sambungkan</button>
+    </form>
+  </div>
+</body>
+</html>
