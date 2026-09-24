@@ -1,0 +1,53 @@
+name: Deploy Mikhmon & Templates
+
+on:
+  push:
+    branches:
+      - main
+      - feat/portal-mockup
+
+jobs:
+  test:
+    name: Test & Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+
+      - name: Validate PHP Syntax
+        run: |
+          find . -name "*.php" ! -path "./portal/*" ! -path "./vendor/*" ! -path "./data/*" -exec php -l {} +
+
+  deploy:
+    name: Deploy to VPS
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Execute Remote SSH Deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            REF_NAME="${{ github.ref_name }}"
+            
+            if [ "$REF_NAME" = "main" ]; then
+              echo "==> Deploying to PRODUCTION (/opt/mikhmon-new)..."
+              cd /opt/mikhmon-new
+              sudo -n git pull
+              sudo -n docker compose -f docker-compose.vps.yml restart mikhmon-php
+              echo "✓ Production deployed successfully"
+            else
+              echo "==> Deploying to STAGING (/opt/mikhmon-staging)..."
+              cd /opt/mikhmon-staging
+              sudo -n git pull
+              sudo -n docker compose -f docker-compose.staging.yml restart mikhmon-staging-php
+              echo "✓ Staging deployed successfully"
+            fi
