@@ -18,6 +18,27 @@
 session_start();
 
 
+$t_name = function_exists('mikhmon_tenant_session') ? mikhmon_tenant_session() : '';
+$t_brand = 'MIKHMON';
+$t_logo = 'img/favicon.png';
+
+if ($t_name !== '') {
+  if (function_exists('mikhmon_tenant_file')) {
+    if (mikhmon_tenant_file('logo.png', $t_name) !== '') {
+      $t_logo = 'data/tenants/' . $t_name . '/logo.png';
+    } elseif (mikhmon_tenant_file('logo.jpg', $t_name) !== '') {
+      $t_logo = 'data/tenants/' . $t_name . '/logo.jpg';
+    }
+    $brandFile = mikhmon_tenant_file('brand.txt', $t_name);
+    if ($brandFile !== '') {
+      $t_brand = htmlspecialchars(trim(@file_get_contents($brandFile)), ENT_QUOTES);
+    } elseif (!empty($hotspotname)) {
+      $t_brand = htmlspecialchars($hotspotname, ENT_QUOTES);
+    } else {
+      $t_brand = ucfirst($t_name) . ' Hotspot';
+    }
+  }
+}
 ?>
 
 <div style="padding-top: 5%;"  class="login-box">
@@ -27,10 +48,10 @@ session_start();
     </div>
     <div class="card-body">
       <div class="text-center pd-5">
-        <img src="img/favicon.png" alt="MIKHMON Logo">
+        <img src="<?= $t_logo; ?>" alt="<?= $t_brand; ?> Logo" style="max-height:80px; max-width:180px;">
       </div>
       <div  class="text-center">
-      <span style="font-size: 25px; margin: 10px;">MIKHMON</span>
+      <span style="font-size: 25px; margin: 10px;"><?= $t_brand; ?></span>
       </div>
       <center>
       <form autocomplete="off" action="" method="post">

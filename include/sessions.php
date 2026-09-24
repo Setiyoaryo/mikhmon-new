@@ -75,9 +75,14 @@ if (!function_exists('mikhmon_session_file')) {
     $name = mikhmon_session_safe($name);
     if ($name === '' || $name === 'mikhmon') {
       return '';
+    // Cek struktur isolasi data/tenants/<nama>/session.php lebih dulu
+    $tenantSession = dirname(__FILE__) . '/../data/tenants/' . strtolower($name) . '/session.php';
+    if (is_file($tenantSession)) {
+      return $tenantSession;
     }
     return mikhmon_session_dir() . $name . '.php';
   }
+}
 }
 
 /*
@@ -101,6 +106,25 @@ if (!function_exists('mikhmon_session_names')) {
           continue;
         }
         $names[$name] = $name;
+      }
+    }
+
+    // Scan juga folder terisolasi data/tenants/*/session.php
+    $tenantDir = dirname(__FILE__) . '/../data/tenants';
+    if (is_dir($tenantDir)) {
+      $tFolders = @scandir($tenantDir);
+      if (is_array($tFolders)) {
+        foreach ($tFolders as $tf) {
+          if ($tf === '.' || $tf === '..' || !is_dir($tenantDir . '/' . $tf)) {
+            continue;
+          }
+          if (is_file($tenantDir . '/' . $tf . '/session.php')) {
+            $name = mikhmon_session_safe($tf);
+            if ($name !== '') {
+              $names[$name] = $name;
+            }
+          }
+        }
       }
     }
 

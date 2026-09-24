@@ -77,6 +77,15 @@ include_once(dirname(__FILE__) . '/include/subscription.php');
     
 <?php
 if ($id == "login" || ($id == "" && substr($url, -1) == "p")) {
+  // Kredensial khusus tenant jika dikonfigurasi di data/tenants/<tenant>/admin.php
+  if (function_exists('mikhmon_tenant_admin')) {
+    $t_cred = mikhmon_tenant_admin();
+    if (is_array($t_cred) && !empty($t_cred['user'])) {
+      $useradm = $t_cred['user'];
+      $passadm = $t_cred['pass'];
+    }
+  }
+
 
   if (isset($_POST['login'])) {
     $user = $_POST['user'];
@@ -92,7 +101,13 @@ if ($id == "login" || ($id == "" && substr($url, -1) == "p")) {
   }
   
 
-  include_once('./include/login.php');
+  // Custom login page per-tenant jika ada di data/tenants/<tenant>/login.php
+  $customLogin = function_exists('mikhmon_tenant_file') ? mikhmon_tenant_file('login.php') : '';
+  if ($customLogin !== '') {
+    include_once($customLogin);
+  } else {
+    include_once('./include/login.php');
+  }
 } elseif (!isset($_SESSION["mikhmon"])) {
   echo "<script>window.location='./admin.php?id=login'</script>";
 } elseif (mikhmon_license_locked() && $id != "subscription" && $id != "logout") {

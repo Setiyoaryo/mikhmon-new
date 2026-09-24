@@ -88,3 +88,50 @@ function mikhmon_tenant_pin($session) {
 function mikhmon_tenant_locked() {
   return isset($_SESSION['mikhmon_tenant']) && $_SESSION['mikhmon_tenant'] !== '';
 }
+
+/*
+ * Direktori penyimpanan terisolasi per-tenant di data/tenants/<nama>/.
+ * Berisi kustomisasi seperti session.php, login.php, logo.png, brand.txt,
+ * dan hotspot captive portal files.
+ */
+function mikhmon_tenant_dir($tenant = '') {
+  if ($tenant === '') {
+    $tenant = mikhmon_tenant_session();
+  }
+  if ($tenant === '') {
+    return '';
+  }
+  $clean = preg_replace('/[^a-z0-9_-]/', '', strtolower($tenant));
+  if ($clean === '') {
+    return '';
+  }
+  return dirname(__FILE__) . '/../data/tenants/' . $clean;
+}
+
+/* Mencari berkas kustom milik tenant (misal: login.php, logo.png, template.php) */
+function mikhmon_tenant_file($path, $tenant = '') {
+  $dir = mikhmon_tenant_dir($tenant);
+  if ($dir === '') {
+    return '';
+  }
+  $cleanPath = ltrim(preg_replace('/\.\.+/', '', (string) $path), '/');
+  $file = $dir . '/' . $cleanPath;
+  return is_file($file) ? $file : '';
+}
+
+/* Kredensial admin khusus tenant jika dikonfigurasi di data/tenants/<nama>/admin.php */
+function mikhmon_tenant_admin($tenant = '') {
+  $file = mikhmon_tenant_file('admin.php', $tenant);
+  if ($file === '') {
+    return null;
+  }
+  $t_data = array();
+  include($file);
+  $t = ($tenant !== '') ? $tenant : mikhmon_tenant_session();
+  if (isset($t_data[$t][1], $t_data[$t][2])) {
+    $u = explode('<|<', $t_data[$t][1])[1];
+    $p = explode('>|>', $t_data[$t][2])[1];
+    return array('user' => $u, 'pass' => $p);
+  }
+  return null;
+}
