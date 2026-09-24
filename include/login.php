@@ -32,10 +32,6 @@ if ($t_name !== '') {
     $brandFile = mikhmon_tenant_file('brand.txt', $t_name);
     if ($brandFile !== '') {
       $t_brand = htmlspecialchars(trim(@file_get_contents($brandFile)), ENT_QUOTES);
-    } elseif (!empty($hotspotname)) {
-      $t_brand = htmlspecialchars($hotspotname, ENT_QUOTES);
-    } else {
-      $t_brand = ucfirst($t_name) . ' Hotspot';
     }
   }
 }
