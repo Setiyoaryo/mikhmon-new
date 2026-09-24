@@ -75,6 +75,7 @@ if (!function_exists('mikhmon_session_file')) {
     $name = mikhmon_session_safe($name);
     if ($name === '' || $name === 'mikhmon') {
       return '';
+    }
     // Cek struktur isolasi data/tenants/<nama>/session.php lebih dulu
     $tenantSession = dirname(__FILE__) . '/../data/tenants/' . strtolower($name) . '/session.php';
     if (is_file($tenantSession)) {
@@ -82,7 +83,6 @@ if (!function_exists('mikhmon_session_file')) {
     }
     return mikhmon_session_dir() . $name . '.php';
   }
-}
 }
 
 /*
