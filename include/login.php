@@ -25,9 +25,9 @@ $t_logo = 'img/favicon.png';
 if ($t_name !== '') {
   if (function_exists('mikhmon_tenant_file')) {
     if (mikhmon_tenant_file('logo.png', $t_name) !== '') {
-      $t_logo = 'data/tenants/' . $t_name . '/logo.png';
+      $t_logo = 'tenant-logo.png';
     } elseif (mikhmon_tenant_file('logo.jpg', $t_name) !== '') {
-      $t_logo = 'data/tenants/' . $t_name . '/logo.jpg';
+      $t_logo = 'tenant-logo.jpg';
     }
     $brandFile = mikhmon_tenant_file('brand.txt', $t_name);
     if ($brandFile !== '') {
