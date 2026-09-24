@@ -44,6 +44,14 @@ portal/dist/
 include/sessions/*.php
 include/sessions/*.php.bak
 include/config.php.bak
+*.bak*
+
+# Temporary voucher state
+voucher/temp.php
+
+# VPS local/dev files
+docker-compose.dev.yml
+nginx-vps.conf
 
 # Kunci enkripsi per sesi. Contoh bentuknya ada di include/tenantkey.example.php.
 include/tenantkey.php

@@ -1,6 +1,15 @@
 <?php 
 if(substr($_SERVER["REQUEST_URI"], -10) == "config.php"){header("Location:./");}; 
-$data['mikhmon'] = array ('1'=>'mikhmon<|<mikhmon','mikhmon>|>aWNlbA==');
+/*
+ * Kredensial admin disimpan di data/admin.php (di luar git) supaya perubahan
+ * password admin di VPS tidak memodifikasi berkas ini dan tidak memicu konflik
+ * saat git pull. Jika data/admin.php belum ada, pakai nilai bawaan di bawah.
+ */
+if (is_file(dirname(__FILE__) . '/../data/admin.php')) {
+  include(dirname(__FILE__) . '/../data/admin.php');
+} else {
+  $data['mikhmon'] = array ('1'=>'mikhmon<|<mikhmon','mikhmon>|>aWNlbA==');
+}
 
 /*
  * Kredensial router TIDAK disimpan di berkas ini, tetapi satu berkas per sesi

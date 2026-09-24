@@ -116,10 +116,16 @@ date_default_timezone_set(empty($_SESSION['timezone']) ? 'Asia/Jakarta' : $_SESS
 		));
 		$gentemp = $commt . "|~" . $profile . "~" . $getvalid . "~" . $getprice . "!".$getsprice."~" . $timelimit . "~" . $datalimit . "~" . $getlock;
 		$gen = '<?php $genu="'.encrypt($gentemp).'";?>';
-		$temp = './voucher/temp.php';
-		$handle = fopen($temp, 'w') or die('Cannot open file:  ' . $temp);
-		$data = $gen;
-		fwrite($handle, $data);
+		$tempDir = dirname(__FILE__) . '/../data/voucher';
+		if (!is_dir($tempDir)) {
+			@mkdir($tempDir, 0777, true);
+		}
+		$temp = is_dir($tempDir) ? $tempDir . '/temp.php' : './voucher/temp.php';
+		$handle = @fopen($temp, 'w');
+		if ($handle) {
+			fwrite($handle, $gen);
+			fclose($handle);
+		}
 
 		$a = array("1" => "", "", 1, 2, 2, 3, 3, 4);
 
@@ -295,7 +301,12 @@ date_default_timezone_set(empty($_SESSION['timezone']) ? 'Asia/Jakarta' : $_SESS
 	}
 
 	$getprofile = $API->comm("/ip/hotspot/user/profile/print");
-	include_once('./voucher/temp.php');
+	$dataTemp = dirname(__FILE__) . '/../data/voucher/temp.php';
+	if (is_file($dataTemp)) {
+		include_once($dataTemp);
+	} else {
+		include_once('./voucher/temp.php');
+	}
 	$genuser = explode("-", decrypt($genu));
 	$genuser1 = explode("~", decrypt($genu));
 	$umode = $genuser[0];

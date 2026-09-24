@@ -69,28 +69,20 @@ if (!isset($_SESSION["mikhmon"])) {
     // enable/disable values the select offers are allowed through.
     $qrbt = (isset($_POST['qrbt']) && $_POST['qrbt'] === 'enable') ? 'enable' : 'disable';
 
-    $cari = array('1' => "mikhmon<|<$useradm", "mikhmon>|>$passadm");
-    $ganti = array('1' => "mikhmon<|<$suseradm", "mikhmon>|>$spassadm");
-
-    // Read once, write once, and check the result: the old loop rewrote the
-    // file twice and left it half updated if anything failed in between.
-    $content = @file_get_contents("./include/config.php");
-    if ($content !== false) {
-      foreach ($cari as $i => $needle) {
-        $content = str_replace((string) $needle, (string) $ganti[$i], $content);
-      }
-      mikhmon_cfg_write("./include/config.php", $content);
+    /*
+     * Simpan kredensial admin dan setelan quickbt ke folder data/ (di luar git)
+     * agar include/config.php dan include/quickbt.php tidak termodifikasi
+     * di working tree dan tidak memicu konflik saat git pull.
+     */
+    $adminDir = dirname(__FILE__) . '/../data';
+    if (!is_dir($adminDir)) {
+      @mkdir($adminDir, 0777, true);
     }
+    $adminContent = "<?php\n\$data['mikhmon'] = array ('1'=>'mikhmon<|<" . $suseradm . "','mikhmon>|>" . $spassadm . "');\n";
+    mikhmon_cfg_write($adminDir . '/admin.php', $adminContent);
 
-    // Same treatment for quickbt.php: unique temporary file plus rename, so a
-    // concurrent save cannot publish a truncated file (an empty quickbt.php
-    // breaks every page that includes it).
     $gen = '<?php $qrbt="' . $qrbt . '";?>';
-    $key = './include/quickbt.php';
-    $tmp = $key . '.' . getmypid() . '.' . mt_rand(100000, 999999) . '.tmp';
-    if (@file_put_contents($tmp, $gen) !== false && !@rename($tmp, $key)) {
-      @unlink($tmp);
-    }
+    mikhmon_cfg_write($adminDir . '/quickbt.php', $gen);
     echo "<script>window.location='./admin.php?id=sessions'</script>";
     }
   }
