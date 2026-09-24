@@ -1,356 +1,186 @@
-### MIKHMON V3
+# MIKHMON Cloud Multi-Tenant & Billing Portal (NOCIFY Edition)
 
-#### Download update.zip
-[update.zip](https://raw.githubusercontent.com/laksa19/laksa19.github.io/master/download/update.zip){:target="_blank"}
+> **Mikhmon V3 Modernized** — Fork modern dari MikroTik Hotspot Manager (Mikhmon v3) dengan backend Go berkecepatan tinggi, sistem sewa multi-tenant otomatis, billing portal pusat terintegrasi QRIS, serta dukungan custom login page & captive portal per-pelanggan.
 
-### Changelog
+---
 
-#### Voucher batches up to 5000, and what happens to the ones nobody uses
+## Penghargaan & Kredit (Credits)
 
-Generating and clearing vouchers is now sized for real batches, measured
-against a live RouterOS 6.49 CHR (single core):
+- **Original Author**: [Laksamadi Guko](https://github.com/laksa19) — Pembuat asli [Mikhmon v3](https://github.com/laksa19/mikhmonv3). Tampilan antarmuka, alur kerja hotspot, dan logika inti voucher tetap dipertahankan 100% kompatibel dan identik.
+- **NOCIFY Edition**: [Setiyo Aryo Winata](https://github.com/Setiyoaryo) / [NOCIFY](https://nocify.id) — Arsitektur backend Go berkinerja tinggi, central billing portal, multi-tenancy isolation, CI/CD otomatis, dan modular custom template engine.
 
-| Action | 1000 vouchers | 5000 vouchers |
-|---|---|---|
-| Generate (form -> nginx -> PHP -> Go -> router) | ~0.45 s | **~2.3 s** |
-| Delete by comment | ~0.5 s | **~9 s** |
+Proyek ini dirilis di bawah lisensi **GNU General Public License v2.0 (GPL-2.0)**.
 
-Worker connections default to 16. More is not better: on a single core router,
-32 connections measured *slower* than 16 for both add and delete, so the
-default is the fast one.
+---
 
-What changed:
-  - the Generate form accepts up to 5000 (was 500), with the PHP and nginx
-    timeouts raised to match.
-  - deletes go out as one parallel batch instead of one round trip per user.
-    "By Comment" and "Expired Users" used to walk the list one user at a time;
-    deleting a user through the user list used to cost six round trips *per
-    user* because it looked up that user's script and scheduler separately.
-  - attributes are omitted rather than sent empty, because RouterOS rejects an
-    empty limit-uptime outright and that failed the entire batch.
+## Ikhtisar Arsitektur
 
-#### Where unused vouchers go
+Sistem terbagi menjadi 3 komponen utama yang berjalan di dalam Docker:
 
-Vouchers are MikroTik hotspot users, so they are inventory: left alone they
-fill the user table, and every lookup gets slower as it grows. There are three
-states and each has its own tool.
-
-1. **Never used** (`uptime` still `0s`). Dead inventory once the selling period
-   is over. Two ways to clear them, both of which only ever touch unused
-   vouchers - a voucher that was logged in with keeps its uptime and is never
-   selected:
-   - *By Comment* (pick a batch in the user list) - clears one batch.
-   - *Unused > 30d* (new button in the user list) - clears every batch whose
-     comment is older than 30 days. Mikhmon already writes the generation date
-     into each batch comment (`vc-735-09.22.26-name`), so age needs no extra
-     bookkeeping. Comments without a date are skipped, and the retention window
-     is a URL parameter (`&days=90`) if 30 is not what you want.
-2. **Used and still valid.** Leave them; the user profile's validity handles it.
-3. **Used and expired.** The profile scheduler rewrites their `limit-uptime` to
-   `1s`, and *Expired Users* clears them.
-
-Suggested routine: keep unused vouchers for your selling window (30 days is the
-default here), then run *Unused > 30d* once a month. Do not delete used-but-
-valid vouchers just to tidy up - that cuts off customers who paid.
-
-
-The user interface is still the original Mikhmon v3 PHP application — same HTML,
-same CSS themes, same JavaScript, same URLs. What changed is where the RouterOS
-traffic happens.
-
-1. **`mikhmon-api`, a Go backend service** (`cmd/mikhmon-api`):
-   - Owns a pool of authenticated RouterOS API connections and reuses them
-     across requests. The PHP version dialled and logged in once per request.
-   - Creates hotspot users with a bounded worker pool, so a whole voucher batch
-     is pushed in parallel instead of one sequential round-trip per user.
-   - Speaks the RouterOS wire protocol directly (post-6.43 and pre-6.43 login),
-     so no PHP extension or external client is involved.
-2. **`lib/routeros_api.class.php` is now a bridge**: it keeps the exact public
-   surface of the original `RouterosAPI` class (`connect`, `comm`, `write`,
-   `read`, `parseResponse`, `debug`, plus the `encrypt`/`decrypt`/`rand*`
-   helpers) and forwards every call to the Go service over HTTP. The service
-   returns the same raw sentences a socket read would have produced, so
-   `parseResponse()` and every caller behave exactly as before. No other PHP
-   file had to be touched to make the switch.
-3. **`hotspot/generateuser.php`** — only the two `for` loops that added users one
-   at a time were replaced with one call to `mikhmon_bulk_add_hotspot_users()`.
-   The credential generation, the form, and the printed output are untouched.
-4. **Docker / Traefik**: `docker-compose.vps.yml` runs the PHP frontend
-   (nginx + php-fpm in one container) and the Go service (internal network
-   only, no published port) behind an existing Traefik instance.
-5. **`cmd/mockrouteros`** — a fake RouterOS API endpoint for testing without a
-   real MikroTik device. See `docker/README.md`.
-
-#### Fork NOCIFY - langganan bulanan (sewa per bulan)
-
-Panel ini disewakan per bulan, dan yang memutuskan sebuah panel masih aktif
-atau tidak bukan panelnya sendiri, melainkan **portal langganan** di
-`control.nocify.id` (lihat `portal/README.md`).
-
-Alasannya: apa pun yang berjalan di server pelanggan ada di tangan pelanggan.
-Lisensi offline dengan kunci HMAC tidak menolong, karena panel tetap harus
-menyimpan kunci rahasianya untuk memeriksa kode - jadi pelanggan bisa membaca
-kuncinya lalu membuat lisensi sendiri, sekaligus mengganti gambar QRIS-nya.
-Sekarang harga dan QRIS hanya ada di portal.
-
-**Cara kerjanya**
-
-1. Tiap pemasangan panel punya kredensial di `include/instance.php`
-   (id + token + alamat portal). Berkas itu tidak ikut di-commit; contohnya
-   ada di `include/instance.example.php`.
-2. Tiap beberapa jam panel bertanya ke portal: `POST /api/v1/heartbeat`.
-   Jawabannya disimpan di `include/heartbeat-cache.php`.
-3. Halaman Langganan menampilkan hasilnya: status, paket, berlaku sampai,
-   sisa waktu, ID instalasi, dan pesan dari portal. Hanya bisa dilihat.
-4. Kalau langganan berakhir, panel dikunci dan semua halaman dialihkan ke
-   halaman Langganan. Yang selalu bisa dibuka: login, logout, dan halaman
-   Langganan itu sendiri.
-
-**Yang penting: panel tidak akan mengunci dirinya sendiri.** Kalau
-`include/instance.php` belum ada, atau portalnya belum pernah berhasil
-dihubungi, panel berjalan seperti biasa dan hanya memberi catatan bahwa
-langganan belum terhubung. Penguncian baru terjadi kalau portal benar-benar
-pernah menjawab, dan menjawab "berakhir".
-
-**Kalau portal tidak bisa dihubungi**
-
-Panel memakai jawaban terakhir yang tersimpan, jadi gangguan di portal tidak
-ikut mematikan panel pelanggan. Setelah 7 hari tanpa kabar
-(`MIKHMON_HEARTBEAT_MAX_AGE`), barulah panel mengunci, dan pesannya menyebut
-bahwa datanya sudah lama tidak diperbarui.
-
-**Pengaturan** - semuanya di `include/subscription.php`, bisa dioverride:
-
-| Konstanta | Bawaan | Arti |
-|---|---|---|
-| `MIKHMON_HEARTBEAT_INTERVAL` | 21600 (6 jam) | jarak antar pemeriksaan |
-| `MIKHMON_HEARTBEAT_MAX_AGE` | 604800 (7 hari) | batas umur data sebelum dikunci |
-| `MIKHMON_WA_NUMBER` | 6285139495106 | nomor WhatsApp yang dihubungi pelanggan |
-| `MIKHMON_LICENSE_WARN_DAYS` | 7 | mulai memperingatkan berapa hari sebelumnya |
-
-**Subdomain per pelanggan**
-
-Panel di-host di VPS NOCIFY dan melayani semua subdomain `*.nocify.id`
-(Traefik, lihat `docker-compose.vps.yml`). Subdomain menentukan sesi router
-yang dipakai, jadi `taufiq.nocify.id` selalu membuka sesi `taufiq`, dan
-`?session=` tidak bisa dipakai untuk membuka sesi pelanggan lain. Pemilih sesi
-di sidebar otomatis disembunyikan. Logikanya ada di `include/tenant.php`.
-
-`control.nocify.id` bukan milik pelanggan, jadi router Traefik untuk portal
-diberi prioritas lebih tinggi supaya alamat itu tidak ikut tertangkap
-wildcard panel.
-
-**About**
-
-`include/about.php` menyebutkan bahwa ini hasil fork MIKHMON V3, tetap
-mencantumkan Laksamadi Guko sebagai penulis asli (wajib GPLv2), dan
-menambahkan NOCIFY sebagai penulis versi ini beserta tombol WhatsApp ke
-0851-3949-5106.
-
-#### Update 06-30 2021 V3.20
-1. Perbaikan typo script profile ```on-login```.
-	- Silakan update user profile dari Mikhmon, dengan cara membuka tiap user profile, kemudian klik Save.
-
-#### Update 24-01 2021
-1. Added docker-compose.yml for test-lab. added mikrotik routeros image.
-	- git clone project
-	- open project folder in terminal
-	- run terminal command --> docker-compose up -d
-	- go to localhost:8081. write ip address 192.168.88.1. write password 12345. apply configuration.
-	- go to localhost:8080. user:mikhmon password:1234. add router. ip address 172.27.0.7, user:admin, password: 12345. write 'test' other inputs.last click save button
-	- for stop --> docker-compose down
-	
-#### Update 09-08 2020 V3.19
-1. Penambahan jumlah sisa voucher di "option comment" laman user list.
-
-#### Update 04-07 2020
-1. Added Dockerfile for test
-	- git clone project
-	- docker build --tag mikhmonv3 .
-	- docker run --rm -i -t -p 8080:80 --name="mkhmn1" mikhmonv3
-	- go to localhost:8080
-
-#### Update 08-16 2019 V3.18
-1. Penambahan harga jual. (Harga yang tampil di voucher)
-
-	*update user profile isi harga jual(selling price) dan update juga template vouchernya, silakan download di [website](https://laksa19.github.io/?mikhmon/v3/voucher)
-	
-2. Untuk pengguna Termux, uninstall Mikhmon kemudian install lagi. 
-
-#### Update 08-06 2019 V3.17
-1. Perbaikan live report.
-2. Perbaikan generate users.
-3. Penambahan idle tileout (auto logout).
-4. Penambahan ping IP Mikrotik di session settings.
-
-#### Update 07-14 2019 V3.16
-1. Penambahan address pool di add user profile dan edit user profile
-2. Notif new update di admin settings
-
-#### Update 07-02 2019 V3.15
-1. Update RouterOS API for support v6.45.x
-
-#### Update 05-09 2019 V3.14
-1. Perbaikan time zone untuk print / quick print.
-2. Penambahan input comment setelah comment user berubah menjadi tanggal expired.
-
-	![314](https://raw.githubusercontent.com/laksa19/laksa19.github.io/master/img/3.14.gif)
-
-#### Update 04-06 2019 V3.13 r7
-1. Perbaikan add user profile (gagal membuat monitor profile di scheduler).
-2. Perbaikan edit profile (remove monitor profile untuk expired mode none).
-3. Penambahan indikator monitor profile di laman list user profile dan edit user profile (Green = Monitor Profile aktif, Orange = Monitor Profile tidak aktif).
-
-	``` Monitor Profile adalah scheduler yang mengecek expired user ```
-
-	![indicator](https://raw.githubusercontent.com/laksa19/laksa19.github.io/master/img/profile-indicator.png)
-
-#### Update 04-02 2019 V3.13 r6
-1. Perbaikan penghitungan tanggal dan jam monitor user profile. 
-2. Perubahan global function ke local function. 
-
-	Silakan diupdate kembali user profilenya. (buka user profile dari Mikhmon, simpan kembali masing-masing user profile).
-
-	Setelah update user profile hapus semua environment (system -> scripts -> environment).
-
-	![delenvironment](https://raw.githubusercontent.com/laksa19/laksa19.github.io/master/img/delenvironment.gif)
-
-	Link Video [Update Profile v3.13 r6](https://drive.google.com/file/d/1ezFG0yxr3LOTgymH_ivUulF8MVevO2-V/view?usp=sharing)
-
-#### Update 03-31 2019 V3.13 r5
-1. Perbaikan user profile. (user expired dipergantian bulan). Silakan diupdate kembali user profilenya.
-	[https://github.com/laksa19/mikhmonv3/issues/5](https://github.com/laksa19/mikhmonv3/issues/5)
-
-#### Update 03-30 2019 V3.13 r4
-1. Perbaikan edit user.
-2. Penambahan nama profile di filter comment (user list).
-3. Penambahan hapus expired user (klik expired pada kolom comment user list).
-4. Perbaikan print laporan penjualan.
-
-#### Update 03-27 2019 V3.13 r3
-1. Perbaikan edit profile.
-2. Perbaikan userlist (dobel comment di pilihan/filter user berdasarkan comment).
-3. Penambahan changelog di laman About.
-
-#### Update 03-22 2019 V3.13 r2
-1. Perbaikan user profile, untuk data penjualan dobel (user 2 digit angka). Silakan diupdate kembali user profilenya.
-
-#### Update 03-21 2019 V3.13 r1
-1. Perbaikan user profile, untuk data penjualan tidak muncul di Mikhmon. Silakan diupdate kembali user profilenya.
-
-#### Update 03-20 2019 V3.13
-1. Perbaikan QR Code. Tidak lagi menggunakan Google chart API.
-2. Perubahan variable QR Code menjadi <?= $qrcode ?> tanpa tag ```<img>```. 
-	  
-   ! Perlu penyesuaian untuk template hotspot, ubah 
-  ```<img src="<?= $qrcode ?>" >``` menjadi ```<?= $qrcode ?>``` tanpa tag ```<img>```. Bagi yang menggunakan template default bisa reset template default untuk menyesuaikan QR Code.
-	  
-   Untuk template voucher yang lain bisa menyesuaikan ukuran QR Code dapat menambahkan style sebagai berikut.
-   
-```html
-<style>
-  .qrcode{
-  height:80px;
-  width:80px;
-  }
-</style>
+```text
+               Internet (HTTPS)
+                      │
+                      ▼
+            Traefik Reverse Proxy (Auto SSL Let's Encrypt)
+           ┌──────────┴───────────────┐
+           │                          │
+           ▼                          ▼
+   control.nocify.id          <tenant>.nocify.id
+ (Central Billing Portal)     (Panel Mikhmon Multi-Tenant)
+   [Go + SQLite + Svelte]       [PHP 7.4 + Nginx]
+                                      │ (Internal HTTP)
+                                      ▼
+                                mikhmon-api
+                           [Go Microservice Daemon]
+                                      │ (RouterOS API Socket)
+                                      ▼
+                             Router MikroTik Fisik / CHR
 ```
 
-![newqr](https://raw.githubusercontent.com/laksa19/laksa19.github.io/master/img/newqr.gif)
-   
-3. Penghapusan Grace period. 
-4. Pehapusan info start dan end user.
-5. Perubahan mode expired. 
-	
-	Mode baru ini tidak lagi menggunakan scheduler per user. Sebagai gantinya informasi tanggal expired akan dipindahkan ke comment user setelah login. Silakan update user profile agar dapat menggunakan mode expired yang baru. Pengecekan expired user yang login sebelum user profile diupdate atau yang masih menggunakan mode expired versi 3.12, bisa melalui scheduler di Mikhmon.
+### 1. Panel Mikhmon (`<nama>.nocify.id`)
+- **Frontend & UI**: Tetap PHP asli v3 tanpa diubah menjadi template Go. Semua form, navigasi, kalkulator waktu, dan tema CSS byte-identical dengan Mikhmon v3 original.
+- **Isolasi Subdomain**: Subdomain URL langsung menentukan sesi router (`taufiq.nocify.id` otomatis memuat router `taufiq`). Pemilih sesi manual dimatikan untuk keamanan.
+- **Performa 19.000+ User (`hscache`)**: Menggunakan memory-caching sementara. Daftar 19.396 user yang awalnya memakan 29 detik per refresh dipangkas menjadi **0.04 detik** (640× lebih cepat).
+- **Batch Pricing & Voucher Printing**: Harga voucher tercatat per-batch di luar git (`data/voucher/harga-batch.php`). Setelah generate, user langsung diarahkan ke halaman hasil dengan tombol cetak batch instan.
 
-    ! Untuk yang menggunakan expired mode dengan record jangan update user profile yang sudah ada, sampai user dengan profile tersebut sudah habis. Sebaiknya buat user profile baru dan generate user baru dengan user profile tersebut. Apa yang terjadi jika diupdate? Report penjualan akan menjadi bertambah untuk masing-user yang sudah login. Tapi kalau tidak ada masalah dengan data penjualan yang double, silakan update user profilenya.
+### 2. RouterOS Microservice API (`mikhmon-api`)
+- Dibangun dengan **Go (Golang)**. Berjalan internal, tidak dibuka ke publik.
+- **Connection Pooling**: Mempertahankan pool koneksi socket terotentikasi ke router. Tidak ada overhead login berulang per-klik HTTP.
+- **Parallel Worker Concurrency**: Generate dan delete voucher diproses paralel dengan worker pool (optimal di concurrency 16).
+  - Generate 1.000 voucher: **~0.45 detik**
+  - Generate 5.000 voucher: **~2.27 detik**
+  - Delete 1.000 voucher: **~0.5 detik**
 
-    ! User yang login sebelum user profile diupdate akan tetap menggunakan sistem atau mode expired yang lama.
-    
-    ! Jangan hapus atau mengganti comment user jika sudah menggunakan format tanggal sebagai berikut :
- 		
-	```mar/20/2019 16:05:11```.
+### 3. Central Billing & Subscription Portal (`control.nocify.id`)
+- Binary Go tunggal tanpa CGO dengan embedded frontend **Svelte 5 + Vite**.
+- Basis data **SQLite** (`data/portal/portal.db`) dengan migrasi skema otomatis.
+- **Fitur Utama**:
+  - Manajemen pelanggan sewa (Tambah, Perpanjang, Tangguhkan, Hapus).
+  - Manajemen paket harga dinamis (bisa diubah langsung dari browser tanpa sentuh kode).
+  - Sistem verifikasi pembayaran berbasis QRIS statis (GoPay/BCA/ShopeePay/dll) dengan unggah gambar QRIS langsung dari dashboard.
+  - Heartbeat client: Panel menanyakan lisensi ke portal secara berkala. Panel **tidak pernah mengunci diri sendiri** jika portal mengalami gangguan sesaat (grace period 7 hari).
 
-6. Cek status voucher tidak bisa untuk user yang masih menggunakan profile dengan mode expired versi 3.12.
+---
 
-#### Update 03-12 2019 V3.12 r1
-1. Perbaikan user profile. Meminimalisir user terhapus sesaat setelah login. !Silakan update user profile dari Mikhmon.
+## Kustomisasi Per-Pelanggan (Custom Templates)
 
-#### Update 03-08 2019 V3.12
-1. Perbaikan remove session.
-2. Penambahan print untuk report
-3. Penambahan filter berdasarkan comment dan range tanggal. (Mikhmon Online).
+Setiap pelanggan dapat memiliki halaman login panel khusus, logo kustom, dan captive portal WiFi MikroTik sendiri.
 
-#### Update 02-14 2019 V3.11
-1. Perbaikan dashboard blank.
-2. Penggantian Print Bluetooth dengan Quick Printer
-3. Penambahan Quick Print. Panduan, https://youtu.be/KGAsHU0qOBA
+### Struktur Folder `custom-templates/`
+Cukup buat folder sesuai **nama subdomain customer**:
 
-#### Update 02-06 2019 V3.10
-1. Perbaikan delete logo.
-2. Penambahan pilihan bahasa.
-3. Dukungan untuk print voucher dari Android. Telah diuji untuk Zjiang Printer Thermal Bluetooth - ZJ-5802.
-Panduan, https://laksa19.github.io/printBT.html
+```text
+custom-templates/
+├── _contoh/                      # Acuan template bawaan
+│   ├── login.php                 # Custom login panel Mikhmon
+│   ├── brand.txt                 # Nama merek hotspot/usaha
+│   ├── logo.png                  # Logo custom (muncul di login & panel)
+│   └── hotspot/                  # Halaman Captive Portal WiFi MikroTik
+│       ├── login.html
+│       └── style.css
+│
+├── taufiq/                       # Aktif untuk taufiq.nocify.id
+└── warkop-berkah/                # Aktif untuk warkop-berkah.nocify.id
+```
 
-#### Update 02-01 2019 V3.9 r3
-1. Perbaaikan cek empty session laman admin
-2. Perbaikan resume report, untuk menampilkan resume bulan sebelumnya.
+### Cara Kerja & URL
+| Kustomisasi | File | URL Akses |
+|---|---|---|
+| **Login Panel Admin** | `custom-templates/<customer>/login.php` | `https://<customer>.nocify.id/admin.php?id=login` |
+| **Brand & Logo** | `brand.txt` / `logo.png` | Otomatis mengganti logo & teks di panel login default |
+| **Captive Portal WiFi** | `custom-templates/<customer>/hotspot/` | `https://<customer>.nocify.id/hotspot-login/` |
 
-#### Update 01-29 2019 V3.9 r2
-1. Perbaaikan load time laman dashboard.
-2. Perbaikan laman uploaad logo.
+> Jika customer tidak memiliki folder kustomisasi, panel berjalan dalam **mode default Mikhmon 100%**.
 
-#### Update 01-29 2019 V3.9 r1
-1. Perbaikan template voucher editor.
-2. Penambahan short tabel.
-3. Perbaikan reset hotspot user.
+---
 
-#### Update 01-27-2019 V3.9
-1. Perbaikan CSS, penambahan tema Blue dan Green.
-2. Cek Koneksi sebelum masuk dashboard dan berganti session.
-3. Penambahan Indikator session Mikhmon yang aktif.
-4. Penambahan fitur Resume Report.
+## Cara Sinkronisasi & CI/CD Deployment
 
-#### Update 01-22-2019 V3.8
-1. Perbaikan Theme.
-2. Traffic dashboard dengan Highchart.
-3. Penambahan fitur Traffic Monitor.
+### 1. Live Tweak Instan 1 Detik (CLI Tool)
+Saat sedang live coding bersama klien dan butuh preview langsung tanpa bolak-balik git commit:
 
-#### Update 01-17-2019 V3.7
-1. Penambahan Light Theme.
-2. Pennambahan menu penngganttian tema di navbar.
+```bash
+# Sinkronisasi ke Staging (staging.nocify.id)
+./tools/sync-template.sh <subdomain> staging
 
-#### Update 12-21-2018 V3.6 r1
-1. Penambahan Live Report
+# Sinkronisasi langsung ke Production (nocify.id)
+./tools/sync-template.sh <subdomain> prod
+```
 
-#### Update 12-1-2018 V3.6
-1. Penambahan progrss bar.
-2. Enable price use decimal (.).
-3. Filter report by prefix.
-4. Export user to script.
-5. Export user to csv.
-6. Penggantian kolom print menjadi tombol dan penambahan pilihan comment di user list.
-7. Perubahan cara print voucher dari user list.
-6. Beautify template editor dan penambahan tombol view voucher.
+### 2. Otomatis via GitHub Actions (CI/CD)
+Setiap push ke remote repository akan memicu pipeline otomatis:
+- **Push ke branch `feat/portal-mockup`**:
+  - Validasi sintaks PHP (`php -l`).
+  - Deploy otomatis via SSH ke server **Staging** (`/opt/mikhmon-staging`).
+  - Aktif di `https://staging.nocify.id` dan `https://<customer>.staging.nocify.id`.
+- **Push ke branch `main`**:
+  - Validasi sintaks dan unit test.
+  - Deploy otomatis via SSH ke server **Production** (`/opt/mikhmon-new`).
+  - Aktif di `https://<customer>.nocify.id` dan `https://control.nocify.id`.
 
-#### Update 11-9-2018 V3.5
-1. Penambahan chart traffic. Sesuaikan Max Rx dan Tx di Settings.
-2. Penambahan pilihan filter di Report dan User Log. 
+---
 
-#### Update 10-30-2018 V3.4
-1. Penambahan cek spasi di nama user profile.
-2. Penambahan user profile dan comment di Report. Yang perlu dilakukan adalah update user profile dari Mikhmon, buka user profile yang ingin diupdate kemudian klik Save. 
-3. Penambahan filter berdasarkan server hotspot di Hotspot Active.
+## Panduan Instalasi & Menjalankan Stack
 
-#### Update 10-24-2018 V3.3
-1. Perubahan struktur menu.
-2. Penambahan Hotspot Cookie dan System Scheduler.
-3. Perubahan Generate User. Menghilangkan huruf l,L,q,Q,o,O serta angka 1 dan 0.
-4. Perbaikan remove user.
+### Kebutuhan Server
+- Linux (Ubuntu 22.04 / Debian 12 direkomendasikan).
+- Docker Engine & Docker Compose v2.
+- Traefik Reverse Proxy pada docker network `proxy`.
 
-#### Update 09-10-2018 V3.2
-1. Penambahan kolom Time Left di Hotspot Active.
-2. Penambahan Parent Queue di Add dan Edit User Profile (Bagaimana cara penggunaannya? silakan pelajari Simple Queue Mikrotik).
-3. Penyesuaian format Data Limit user menjadi Byte Binary ([base 2](https://www.gbmb.org/gigabytes)).
-4. Reformat Uptime.
+### 1. Clone & Konfigurasi Lingkungan
+```bash
+git clone https://github.com/Setiyoaryo/mikhmon-new.git /opt/mikhmon-new
+cd /opt/mikhmon-new
+
+cp .env.example .env
+nano .env
+```
+
+Pastikan variabel wajib diisi di `.env`:
+```ini
+PORTAL_ADMIN_USER=admin
+PORTAL_ADMIN_PASSWORD=rahasia_admin_portal
+PORTAL_BASE_URL=https://control.nocify.id
+PORTAL_QRIS_MERCHANT="NOCIFY, SOFTWARE"
+PORTAL_QRIS_NMID=ID1026599320839
+PORTAL_WA=6285139495106
+HSCACHE_TTL=300
+```
+
+### 2. Menjalankan Production Stack
+```bash
+docker compose -f docker-compose.vps.yml up -d --build
+```
+
+### 3. Menjalankan Staging Stack (Opsional)
+Staging berjalan terisolasi di folder dan container terpisah, lengkap dengan mock router built-in:
+```bash
+git clone -b feat/portal-mockup https://github.com/Setiyoaryo/mikhmon-new.git /opt/mikhmon-staging
+cd /opt/mikhmon-staging
+
+docker compose -f docker-compose.staging.yml up -d --build
+```
+
+---
+
+## Manajemen Operasional Harian
+
+### Menambah Pelanggan Baru (3 Langkah)
+1. **Buat sesi router**: Buka `https://panel.nocify.id` -> *Settings* -> *Add Router*. Isi nama sesi dengan **subdomain** yang diinginkan (huruf kecil, misal `budi`).
+2. **Daftarkan di portal**: Buka `https://control.nocify.id/#/admin` -> *Tambah Pelanggan*. Masukkan nama, nomor WA, dan pilih sesi `budi`.
+3. **Kirim info ke pelanggan**: Kirim alamat panel `https://budi.nocify.id` dan link aktivasi pembayaran.
+
+### Mengubah Harga Langganan
+Buka `https://control.nocify.id/#/admin` -> gulir ke kartu **Paket & Harga**. Klik nominal harga yang ingin diubah, ketik angka baru, lalu klik **Simpan**. Harga di halaman pembayaran pelanggan langsung terupdate tanpa restart container.
+
+### Backup Data
+Semua data penting tersimpan di folder `data/` yang tidak terlacak git:
+- `data/portal/portal.db` (Database langganan & pelanggan SQLite).
+- `data/templates/` (Template voucher yang disunting via editor).
+- `data/voucher/harga-batch.php` (Catatan riwayat harga per-batch).
+- `include/sessions/` & `include/tenantkey.php` (Kredensial router terenkripsi).
+
+Cadangkan berkas tersebut secara berkala:
+```bash
+tar -czvf backup-mikhmon-$(date +%F).tar.gz /opt/mikhmon-new/data/ /opt/mikhmon-new/include/sessions/ /opt/mikhmon-new/include/tenantkey.php
+```
