@@ -15,6 +15,7 @@ services:
       # Bind mount: the host repo is the source of truth and include/config.php,
       # generated vouchers, themes/lang and uploaded logos persist on the host.
       - ./:/var/www
+      - ./docker/nginx.default.conf:/etc/nginx/http.d/default.conf:ro
     environment:
       MIKHMON_API_URL: "http://mikhmon-api:8088"
       # Alamat portal langganan. Panel membacanya dari sini lalu mendaftarkan
