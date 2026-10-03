@@ -75,18 +75,10 @@ if (!isset($_SESSION["mikhmon"])) {
 
   include_once(dirname(__FILE__) . '/../include/onlogin.php');
 
-  // Blok "tail" lama (pra-hardening), yaitu bagian setelah /sys sch add.
-  // Dipakai sebagai pola pencocokan saat migrasi; teks ini beku (tidak berubah).
-  $legacyTail = ':delay 5s; :local exp [ /sys sch get [ /sys sch find where name="$user" ] next-run]; '
-    . ':local getxp [len $exp]; '
-    . ':if ($getxp = 15) do={ :local d [:pic $exp 0 6]; :local t [:pic $exp 7 16]; :local s ("/"); :local exp ("$d$s$year $t"); /ip hotspot user set comment="$exp" [find where name="$user"];}; '
-    . ':if ($getxp = 8) do={ /ip hotspot user set comment="$date $exp" [find where name="$user"];}; '
-    . ':if ($getxp > 15) do={ /ip hotspot user set comment="$exp" [find where name="$user"];};'
-    . ':delay 5s; '
-    . '/sys sch remove [find where name="$user"]';
-
-  $newTail = mikhmon_onlogin_sched_tail();
-
+  // Semua aturan upgrade on-login ada di include/onlogin.php
+  // (mikhmon_onlogin_upgrade) supaya hanya ada satu sumber kebenaran dan
+  // mudah diuji. Di sini kita hanya membaca profil, memanggilnya, lalu
+  // mengirim semua perubahan sekaligus.
   $getprofile = $API->comm("/ip/hotspot/user/profile/print");
 
   $updates = array();
@@ -94,71 +86,23 @@ if (!isset($_SESSION["mikhmon"])) {
 
   if (is_array($getprofile)) {
     foreach ($getprofile as $prof) {
-      $pid = isset($prof['.id']) ? $prof['.id'] : '';
+      $pid     = isset($prof['.id']) ? $prof['.id'] : '';
       $onlogin = isset($prof['on-login']) ? $prof['on-login'] : '';
+      $pname   = isset($prof['name']) ? $prof['name'] : '';
 
       if ($pid === '' || $onlogin === '') {
         $skipped++;
         continue;
       }
 
-      // Sudah sepenuhnya baru (start-time + nama scheduler unik)? Lewati.
-      if (strpos($onlogin, 'start-time=$time') !== false && strpos($onlogin, '$schname') !== false) {
+      $res = mikhmon_onlogin_upgrade($onlogin, $pname);
+      if (!empty($res['changed'])) {
+        // Kumpulkan dulu; semua update dikirim sekaligus supaya service Go
+        // menjalankannya paralel (dulu satu round-trip per profil = lambat).
+        $updates[] = array('id' => $pid, 'onlogin' => $res['onlogin']);
+      } else {
         $skipped++;
-        continue;
       }
-
-      // Hanya tambal profil yang memang memakai scheduler on-login. Profil
-      // mode "None" tidak punya scheduler, jadi tidak perlu diapa-apakan.
-      if (strpos($onlogin, '/sys sch add') === false && strpos($onlogin, 'start-date=$date') === false) {
-        $skipped++;
-        continue;
-      }
-
-      $new = $onlogin;
-
-      // 1. Deklarasikan waktu login sebelum dipakai (kalau belum ada).
-      $new = str_replace(
-        ':local date [ /system clock get date ];:local year',
-        ':local date [ /system clock get date ];:local time [ /system clock get time ];:local year',
-        $new
-      );
-
-      // 2. Pakai jam login sebagai acuan scheduler (inti perbaikan Tahap 1).
-      $new = str_replace(
-        'disable=no start-date=$date interval=',
-        'disable=no start-date=$date start-time=$time interval=',
-        $new
-      );
-
-      // 3. Rapikan script Record.
-      $new = str_replace(
-        ':local time [/system clock get time ]',
-        ':set time [ /system clock get time ]',
-        $new
-      );
-
-      // 4 + 5. Tahap 2: upgrade tail (delay + parsing) dan nama scheduler,
-      //         dilakukan bersamaan supaya tidak pernah setengah jalan.
-      $beforeTail = $new;
-      $new = str_replace($legacyTail, $newTail, $new);
-      if ($new !== $beforeTail) {
-        $new = str_replace(
-          '/sys sch add name="$user" disable=no',
-          ':local schname ("exp-" . $user); /sys sch remove [find where name=$schname]; /sys sch add name=$schname disable=no',
-          $new
-        );
-      }
-
-      if ($new === $onlogin) {
-        // Pola tidak cocok: jangan menebak, biarkan apa adanya.
-        $skipped++;
-        continue;
-      }
-
-      // Kumpulkan dulu; semua update dikirim sekaligus supaya service Go
-      // menjalankannya paralel (dulu satu round-trip per profil = lambat).
-      $updates[] = array('id' => $pid, 'onlogin' => $new);
     }
   }
 
