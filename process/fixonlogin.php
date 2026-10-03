@@ -42,6 +42,37 @@ error_reporting(0);
 if (!isset($_SESSION["mikhmon"])) {
   header("Location:../admin.php?id=login");
 } else {
+  // Mode laporan (read-only): ?fix-onlogin=report
+  // Menampilkan script on-login tiap profil apa adanya supaya bisa diperiksa
+  // dari browser tanpa akses langsung ke router. Tidak mengubah apa pun.
+  if (isset($_GET['fix-onlogin']) && $_GET['fix-onlogin'] === 'report') {
+    $profiles = $API->comm("/ip/hotspot/user/profile/print");
+    header('Content-Type: text/html; charset=utf-8');
+    echo "<pre style='white-space:pre-wrap;word-break:break-all;background:#111;color:#ccc;padding:14px;font-size:12px'>";
+    echo "LAPORAN ON-LOGIN PROFIL (read-only, tidak mengubah apa pun)\n";
+    echo "Total: " . (is_array($profiles) ? count($profiles) : 0) . " profil\n";
+    echo "Keterangan: BARU=sudah diperbaiki  LAMA=pakai scheduler belum diperbaiki  LAIN=format tak dikenal  KOSONG=tanpa script\n\n";
+    if (is_array($profiles)) {
+      foreach ($profiles as $p) {
+        $pn = isset($p['name']) ? $p['name'] : '(tanpa nama)';
+        $ol = isset($p['on-login']) ? $p['on-login'] : '';
+        if ($ol === '') {
+          $cls = 'KOSONG';
+        } elseif (strpos($ol, '$schname') !== false) {
+          $cls = 'BARU';
+        } elseif (strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false) {
+          $cls = 'LAMA';
+        } else {
+          $cls = 'LAIN';
+        }
+        echo "===== [$cls] " . htmlspecialchars($pn) . "  (panjang=" . strlen($ol) . ") =====\n";
+        echo htmlspecialchars($ol) . "\n\n";
+      }
+    }
+    echo "</pre>";
+    exit;
+  }
+
   include_once(dirname(__FILE__) . '/../include/onlogin.php');
 
   // Blok "tail" lama (pra-hardening), yaitu bagian setelah /sys sch add.

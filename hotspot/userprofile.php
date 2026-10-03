@@ -47,6 +47,7 @@ if (!isset($_SESSION["mikhmon"])) {
     <h3><i class=" fa fa-pie-chart"></i> User Profile 
     &nbsp; | &nbsp; <a href="./?user-profile=add&session=<?= $session; ?>" title="Add User"><i class="fa fa-user-plus"></i> Add</a>
     &nbsp; | &nbsp; <a href="./?fix-onlogin=1&session=<?= $session; ?>" onclick="return confirm('Perbaiki script masa aktif (on-login) pada SEMUA profil yang masih memakai script lama? Profil yang sudah benar dilewati.');" title="Perbaiki on-login profil lama agar masa aktif tidak terpotong"><i class="fa fa-wrench"></i> Fix Validity</a>
+    &nbsp; | &nbsp; <a href="./?fix-onlogin=report&session=<?= $session; ?>" target="_blank" title="Lihat script on-login tiap profil (read-only, untuk diagnosa)"><i class="fa fa-search"></i> Lihat Script</a>
 	</h3>
 </div>
 <!-- /.card-header -->
