@@ -192,12 +192,23 @@ class RouterosAPI
                         $CURRENT =& $PARSED[$x][];
                     }
                 } elseif ($x != '!done') {
-                    $MATCHES = array();
-                    if (preg_match_all('/[^=]+/i', $x, $MATCHES)) {
-                        if ($MATCHES[0][0] == 'ret') {
-                            $singlevalue = $MATCHES[0][1];
+                    /* Kata atribut berformat "=kunci=nilai", dan nilainya sendiri
+                     * boleh mengandung "=" (script on-login, komentar, source...).
+                     * Dulu kata dipotong di SETIAP "=", sehingga nilai hanya
+                     * terbaca sampai "=" pertama. Akibatnya seluruh on-login
+                     * sebuah profil terbaca sebagai potongan pendek (mis. berhenti
+                     * tepat sebelum "$user"), dan tool "Fix Validity" mengira tidak
+                     * ada yang perlu diperbaiki lalu melewati semua profil.
+                     * Ambil utuh semua teks setelah "=" kedua. */
+                    $word = ($x !== '' && $x[0] === '=') ? substr($x, 1) : $x;
+                    $eq   = strpos($word, '=');
+                    $key  = ($eq === false) ? $word : substr($word, 0, $eq);
+                    $val  = ($eq === false) ? '' : substr($word, $eq + 1);
+                    if ($key !== '') {
+                        if ($key == 'ret') {
+                            $singlevalue = $val;
                         }
-                        $CURRENT[$MATCHES[0][0]] = (isset($MATCHES[0][1]) ? $MATCHES[0][1] : '');
+                        $CURRENT[$key] = $val;
                     }
                 }
             }
@@ -234,12 +245,23 @@ class RouterosAPI
                         $CURRENT =& $PARSED[$x][];
                     }
                 } elseif ($x != '!done') {
-                    $MATCHES = array();
-                    if (preg_match_all('/[^=]+/i', $x, $MATCHES)) {
-                        if ($MATCHES[0][0] == 'ret') {
-                            $singlevalue = $MATCHES[0][1];
+                    /* Kata atribut berformat "=kunci=nilai", dan nilainya sendiri
+                     * boleh mengandung "=" (script on-login, komentar, source...).
+                     * Dulu kata dipotong di SETIAP "=", sehingga nilai hanya
+                     * terbaca sampai "=" pertama. Akibatnya seluruh on-login
+                     * sebuah profil terbaca sebagai potongan pendek (mis. berhenti
+                     * tepat sebelum "$user"), dan tool "Fix Validity" mengira tidak
+                     * ada yang perlu diperbaiki lalu melewati semua profil.
+                     * Ambil utuh semua teks setelah "=" kedua. */
+                    $word = ($x !== '' && $x[0] === '=') ? substr($x, 1) : $x;
+                    $eq   = strpos($word, '=');
+                    $key  = ($eq === false) ? $word : substr($word, 0, $eq);
+                    $val  = ($eq === false) ? '' : substr($word, $eq + 1);
+                    if ($key !== '') {
+                        if ($key == 'ret') {
+                            $singlevalue = $val;
                         }
-                        $CURRENT[$MATCHES[0][0]] = (isset($MATCHES[0][1]) ? $MATCHES[0][1] : '');
+                        $CURRENT[$key] = $val;
                     }
                 }
             }
