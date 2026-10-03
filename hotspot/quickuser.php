@@ -112,15 +112,19 @@ $getquickprint = $API->comm("/system/script/print", array("?name" => "$quickprin
 			}
 
 			for ($i = 1; $i <= $qty; $i++) {
-				$API->comm("/ip/hotspot/user/add", array(
+				$u_add = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
 					"password" => "$p[$i]",
 					"profile" => "$profile",
-					"limit-uptime" => "$timelimit",
 					"limit-bytes-total" => "$datalimit",
 					"comment" => "$commt",
-				));
+				);
+				// limit-uptime kosong ditolak RouterOS, jadi hanya dikirim bila terisi.
+				if ($timelimit !== "") {
+					$u_add["limit-uptime"] = "$timelimit";
+				}
+				$API->comm("/ip/hotspot/user/add", $u_add);
 			}
 		}
 
@@ -184,15 +188,19 @@ $getquickprint = $API->comm("/system/script/print", array("?name" => "$quickprin
 
 			}
 			for ($i = 1; $i <= $qty; $i++) {
-				$API->comm("/ip/hotspot/user/add", array(
+				$u_add = array(
 					"server" => "$server",
 					"name" => "$u[$i]",
 					"password" => "$u[$i]",
 					"profile" => "$profile",
-					"limit-uptime" => "$timelimit",
 					"limit-bytes-total" => "$datalimit",
 					"comment" => "$commt",
-				));
+				);
+				// limit-uptime kosong ditolak RouterOS, jadi hanya dikirim bila terisi.
+				if ($timelimit !== "") {
+					$u_add["limit-uptime"] = "$timelimit";
+				}
+				$API->comm("/ip/hotspot/user/add", $u_add);
 			}
 		}
 

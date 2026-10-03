@@ -50,10 +50,15 @@ if ($removehotspotusers != "") {
 }
 
 // The script and scheduler Mikhmon creates for a user carry the user's name.
+// The per-user on-login scheduler is now named "exp-<user>" (older routers may
+// still use the bare user name), so accept both when cleaning up.
 $names = array();
+$schnames = array();
 foreach ($uids as $uid) {
   if (isset($nameById[$uid]) && $nameById[$uid] !== "") {
     $names[$nameById[$uid]] = true;
+    $schnames[$nameById[$uid]] = true;
+    $schnames["exp-" . $nameById[$uid]] = true;
   }
 }
 
@@ -72,7 +77,7 @@ if (!empty($names)) {
   $getsch = $API->comm("/system/scheduler/print");
   if (is_array($getsch)) {
     foreach ($getsch as $s) {
-      if (isset($s['name'], $s['.id']) && isset($names[$s['name']])) {
+      if (isset($s['name'], $s['.id']) && isset($schnames[$s['name']])) {
         $schIds[] = $s['.id'];
       }
     }

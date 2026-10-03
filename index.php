@@ -119,6 +119,7 @@ if (!isset($_SESSION["mikhmon"])) {
   $removehotspotuserbycomment = $_GET['remove-hotspot-user-by-comment'];
   $removeexpiredhotspotuser = $_GET['remove-hotspot-user-expired'];
   $removeunusedhotspotuser = $_GET['remove-unused-hotspot-user'];
+  $fixonlogin = $_GET['fix-onlogin'];
   $enablehotspotuser = $_GET['enable-hotspot-user'];
   $disablehotspotuser = $_GET['disable-hotspot-user'];
   $enableipbinding = $_GET['enable-ip-binding'];
@@ -412,6 +413,13 @@ elseif ($removeunusedhotspotuser != "") {
   echo "<b class='cl-w'><i class='fa fa-circle-o-notch fa-spin' style='font-size:24px'></i> Processing...</b>";
 
   include_once('./process/removeunusedhotspotuser.php');
+}
+
+// perbaiki script on-login profil lama (masa aktif terpotong)
+elseif ($fixonlogin != "") {
+  echo "<b class='cl-w'><i class='fa fa-circle-o-notch fa-spin' style='font-size:24px'></i> Processing...</b>";
+
+  include_once('./process/fixonlogin.php');
 }
 // reset hotspot user
   elseif ($resethotspotuser != "") {
