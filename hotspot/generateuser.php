@@ -71,14 +71,15 @@ date_default_timezone_set($_SESSION['timezone']);
 		$prefix = ($_POST['prefix']);
 		$char = ($_POST['char']);
 		$profile = ($_POST['profile']);
-		$timelimit = ($_POST['timelimit']);
+		$timelimit = trim((string) $_POST['timelimit']);
 		$datalimit = ($_POST['datalimit']);
 		$adcomment = ($_POST['adcomment']);
 		$mbgb = ($_POST['mbgb']);
-		if ($timelimit == "") {
-			$timelimit = "0";
-		} else {
-			$timelimit = $timelimit;
+		// Kosong dan "0" sama-sama berarti tanpa batas uptime. Dibiarkan kosong
+		// supaya atribut limit-uptime tidak dikirim ke RouterOS sama sekali
+		// (nilai kosong ditolak; "0" berisiko terbaca sebagai batas 0 detik).
+		if ($timelimit == "0") {
+			$timelimit = "";
 		}
 		if ($datalimit == "") {
 			$datalimit = "0";
@@ -97,7 +98,11 @@ date_default_timezone_set($_SESSION['timezone']);
 		$getsprice = explode(",", $ponlogin)[4];
 		$getlock = explode(",", $ponlogin)[6];
 		$_SESSION['ubp'] = $profile;
-		$commt = $user . "-" . rand(100, 999) . "-" . date("m.d.y") . "-" . $adcomment;
+		// Kode batch: angka acak 5 digit + tanggal. Dulu hanya 3 digit (900
+		// kemungkinan), sehingga dua batch di hari yang sama bisa kebetulan
+		// berbagi kode - dan saat cetak, dua batch itu tercampur. 5 digit
+		// memperkecil peluang tabrakan 100x.
+		$commt = $user . "-" . rand(10000, 99999) . "-" . date("m.d.y") . "-" . $adcomment;
 		$gentemp = $commt . "|~" . $profile . "~" . $getvalid . "~" . $getprice . "!".$getsprice."~" . $timelimit . "~" . $datalimit . "~" . $getlock;
 		$gen = '<?php $genu="'.encrypt($gentemp).'";?>';
 		$temp = './voucher/temp.php';
@@ -105,10 +110,25 @@ date_default_timezone_set($_SESSION['timezone']);
 		$data = $gen;
 		fwrite($handle, $data);
 
+		/* Kumpulkan username yang sudah ada di router. Tanpa ini, username
+		 * voucher yang kebetulan sama dengan user lama akan ditolak RouterOS
+		 * (voucher itu tidak terbuat) dan tidak muncul di daftar cetak. */
+		$used_names = array();
+		$existing_users = $API->comm("/ip/hotspot/user/print", array(".proplist" => "name"));
+		if (is_array($existing_users)) {
+			foreach ($existing_users as $eu) {
+				if (isset($eu['name']) && $eu['name'] !== "") {
+					$used_names[$eu['name']] = true;
+				}
+			}
+		}
+
 		$a = array("1" => "", "", 1, 2, 2, 3, 3, 4);
 
 		if ($user == "up") {
-			for ($i = 1; $i <= $qty; $i++) {
+			$i = 1;
+			$attempt = 0;
+			while ($i <= $qty) {
 				if ($char == "lower") {
 					$u[$i] = randLC($userl);
 				} elseif ($char == "upper") {
@@ -144,6 +164,17 @@ date_default_timezone_set($_SESSION['timezone']);
 				}
 
 				$u[$i] = "$prefix$u[$i]";
+
+				// Kalau username sudah dipakai (user lama atau voucher lain di
+				// batch ini), ulangi untuk indeks yang sama sampai unik.
+				if (isset($used_names[$u[$i]])) {
+					$attempt++;
+					if ($attempt > 200) { $used_names[$u[$i]] = true; $i++; $attempt = 0; }
+					continue;
+				}
+				$used_names[$u[$i]] = true;
+				$i++;
+				$attempt = 0;
 			}
 
 			$bulkusers = array();
@@ -168,7 +199,9 @@ date_default_timezone_set($_SESSION['timezone']);
 
 		if ($user == "vc") {
 			$shuf = ($userl - $a[$userl]);
-			for ($i = 1; $i <= $qty; $i++) {
+			$i = 1;
+			$attempt = 0;
+			while ($i <= $qty) {
 				if ($char == "lower") {
 					$u[$i] = randLC($shuf);
 				} elseif ($char == "upper") {
@@ -224,6 +257,16 @@ date_default_timezone_set($_SESSION['timezone']);
 					$u[$i] = "$prefix$p[$i]";
 				}
 
+				// Kalau username sudah dipakai (user lama atau voucher lain di
+				// batch ini), ulangi untuk indeks yang sama sampai unik.
+				if (isset($used_names[$u[$i]])) {
+					$attempt++;
+					if ($attempt > 200) { $used_names[$u[$i]] = true; $i++; $attempt = 0; }
+					continue;
+				}
+				$used_names[$u[$i]] = true;
+				$i++;
+				$attempt = 0;
 			}
 			$bulkusers = array();
 			for ($i = 1; $i <= $qty; $i++) {
@@ -245,7 +288,20 @@ date_default_timezone_set($_SESSION['timezone']);
 		}
 
 
-		if ($qty < 2) {
+		/* Simpan hasil supaya halaman berikutnya bisa menampilkan berapa yang
+		 * benar-benar jadi dan berapa yang gagal - dulu tidak ada umpan balik
+		 * sama sekali, jadi voucher yang gagal terbuat tidak terlihat. */
+		$hasil = is_array($bulkresult) ? $bulkresult : array();
+		$_SESSION['mikhmon_generate_hasil'] = array(
+			'comment' => $commt,
+			'profile' => $profile,
+			'qty'     => $qty,
+			'added'   => isset($hasil['added']) ? (int) $hasil['added'] : 0,
+			'failed'  => isset($hasil['failed']) ? (int) $hasil['failed'] : 0,
+			'errors'  => (isset($hasil['errors']) && is_array($hasil['errors'])) ? array_slice($hasil['errors'], 0, 10) : array(),
+		);
+
+		if ($qty < 2 && (int) $_SESSION['mikhmon_generate_hasil']['failed'] === 0) {
 			echo "<script>window.location='./?hotspot-user=" . $u[1] . "&session=" . $session . "'</script>";
 		} else {
 			echo "<script>window.location='./?hotspot-user=generate&session=" . $session . "'</script>";
@@ -303,6 +359,40 @@ date_default_timezone_set($_SESSION['timezone']);
 
 	}
 
+}
+?>
+<?php
+/* Umpan balik setelah generate: berapa yang jadi, berapa yang gagal, dan
+ * alasan kegagalannya. Ditampilkan sekali lalu dibuang.
+ *
+ * Hanya pada GET: saat POST, halaman ini juga ikut render setelah menulis
+ * script redirect - kalau pesan dibuang di situ, halaman tujuan tidak akan
+ * pernah melihatnya. */
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' && isset($_SESSION['mikhmon_generate_hasil']) && is_array($_SESSION['mikhmon_generate_hasil'])) {
+  $gh = $_SESSION['mikhmon_generate_hasil'];
+  unset($_SESSION['mikhmon_generate_hasil']);
+  $gh_added = isset($gh['added']) ? (int) $gh['added'] : 0;
+  $gh_failed = isset($gh['failed']) ? (int) $gh['failed'] : 0;
+  $gh_errors = (isset($gh['errors']) && is_array($gh['errors'])) ? $gh['errors'] : array();
+  ?>
+<div class="row">
+  <div class="col-12">
+    <div style="margin:8px 0; padding:10px 14px; border-radius:4px; border-left:4px solid <?= $gh_failed > 0 ? '#e74c3c' : '#27ae60'; ?>; background:<?= $gh_failed > 0 ? '#fdecea' : '#eafaf1'; ?>;">
+      <b><?= number_format($gh_added, 0, ",", "."); ?> voucher jadi</b>
+      untuk profil <b><?= htmlspecialchars(isset($gh['profile']) ? $gh['profile'] : '', ENT_QUOTES); ?></b>
+      &middot; batch <span style="font-family:monospace;"><?= htmlspecialchars(isset($gh['comment']) ? $gh['comment'] : '', ENT_QUOTES); ?></span>
+      <?php if ($gh_failed > 0) { ?>
+        &middot; <b style="color:#c0392b;"><?= (int) $gh_failed; ?> GAGAL</b>
+      <?php } ?>
+      <?php if (!empty($gh_errors)) { ?>
+        <div style="margin-top:6px; font-size:12px; color:#c0392b;">
+          <?php foreach ($gh_errors as $ge) { echo htmlspecialchars($ge, ENT_QUOTES) . "<br>"; } ?>
+        </div>
+      <?php } ?>
+    </div>
+  </div>
+</div>
+  <?php
 }
 ?>
 <div class="row">
