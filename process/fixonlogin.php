@@ -32,6 +32,11 @@ error_reporting(0);
  * mengubah bagian lain (harga, record, lock) sama sekali. Semua langkah aman
  * dijalankan berulang: profil yang sudah benar dilewati, dan profil yang
  * polanya tidak dikenal juga dilewati (tidak pernah ditebak-tebak).
+ *
+ * Semua perubahan dikirim sekaligus ke service Go
+ * (mikhmon_bulk_profile_onlogin_set) agar diproses paralel - dulu satu
+ * round-trip per profil, sehingga tombol ini lambat di router berprofil banyak.
+ * Bila service Go tidak terjangkau, otomatis kembali ke jalur satu-per-satu.
  */
 
 if (!isset($_SESSION["mikhmon"])) {
@@ -53,7 +58,7 @@ if (!isset($_SESSION["mikhmon"])) {
 
   $getprofile = $API->comm("/ip/hotspot/user/profile/print");
 
-  $fixed = 0;
+  $updates = array();
   $skipped = 0;
 
   if (is_array($getprofile)) {
@@ -120,11 +125,27 @@ if (!isset($_SESSION["mikhmon"])) {
         continue;
       }
 
-      $API->comm("/ip/hotspot/user/profile/set", array(
-        ".id" => $pid,
-        "on-login" => $new,
-      ));
-      $fixed++;
+      // Kumpulkan dulu; semua update dikirim sekaligus supaya service Go
+      // menjalankannya paralel (dulu satu round-trip per profil = lambat).
+      $updates[] = array('id' => $pid, 'onlogin' => $new);
+    }
+  }
+
+  $fixed = 0;
+  if (!empty($updates)) {
+    $result = mikhmon_bulk_profile_onlogin_set($API, $updates);
+    if (!empty($result['backend'])) {
+      $fixed = (int) $result['updated'];
+    } else {
+      // Backend Go tidak terjangkau: pakai jalur lama, satu per satu, supaya
+      // tombol ini tetap bekerja walau service sedang mati.
+      foreach ($updates as $u) {
+        $API->comm("/ip/hotspot/user/profile/set", array(
+          ".id"      => $u['id'],
+          "on-login" => $u['onlogin'],
+        ));
+        $fixed++;
+      }
     }
   }
 

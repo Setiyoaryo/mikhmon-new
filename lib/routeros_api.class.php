@@ -881,6 +881,91 @@ function mikhmon_bulk_remove_hotspot_users($API, $ids, $concurrency = 0)
 
 
 /**
+ * Rewrite the on-login of many hotspot user profiles in parallel.
+ *
+ * Updating profiles one by one costs a full round trip to the router per
+ * profile, so "Fix Validity" on a router with many profiles crawls. The whole
+ * list is sent in one request here and the Go service applies it across its
+ * connection pool, so the wall-clock time is a fraction of the sequential loop.
+ *
+ * The transformation itself stays in PHP (process/fixonlogin.php) so there is
+ * a single source of truth for the on-login rules; this only moves the writes.
+ *
+ * @param RouterosAPI $API      A connected API instance
+ * @param array       $updates  List of array('id' => '.id', 'onlogin' => script)
+ *
+ * @return array  total / updated / failed / errors / backend
+ *                backend=false means the Go service was unreachable and the
+ *                caller should fall back to the sequential path.
+ */
+function mikhmon_bulk_profile_onlogin_set($API, $updates)
+{
+    $total = count($updates);
+    if ($total === 0) {
+        return array('total' => 0, 'updated' => 0, 'failed' => 0, 'errors' => array(), 'backend' => true);
+    }
+
+    if (!is_object($API) || empty($API->session)) {
+        return array(
+            'total'   => $total,
+            'updated' => 0,
+            'failed'  => $total,
+            'errors'  => array('not connected'),
+            'backend' => false,
+        );
+    }
+
+    $sentences = array();
+    foreach ($updates as $u) {
+        $sentences[] = array(
+            '/ip/hotspot/user/profile/set',
+            '=.id=' . $u['id'],
+            '=on-login=' . $u['onlogin'],
+        );
+    }
+
+    $response = mikhmon_api_post('/v1/exec', array(
+        'session'    => $API->session,
+        'sentences'  => $sentences,
+        'timeout_ms' => max(1000, ((int) $API->timeout) * 1000),
+    ), mikhmon_api_exec_timeout());
+
+    if (!is_array($response) || empty($response['ok']) || !isset($response['results'])) {
+        return array(
+            'total'   => $total,
+            'updated' => 0,
+            'failed'  => $total,
+            'errors'  => array(mikhmon_api_error($response)),
+            'backend' => false,
+        );
+    }
+
+    $updated = 0;
+    $failed = 0;
+    $errors = array();
+    foreach ($response['results'] as $res) {
+        $err = isset($res['error']) ? trim((string) $res['error']) : '';
+        if ($err === '') {
+            $updated++;
+        } else {
+            $failed++;
+            if (count($errors) < 10) {
+                $errors[] = $err;
+            }
+        }
+    }
+
+    return array(
+        'total'   => $total,
+        'updated' => $updated,
+        'failed'  => $failed,
+        'errors'  => $errors,
+        'backend' => true,
+    );
+}
+
+
+/**
  * Find matching RouterOS rows and delete them, without shipping them here.
  *
  * This is the fast path for the bulk deletes. Doing it from PHP means printing
