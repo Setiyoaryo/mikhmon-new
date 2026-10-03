@@ -19,9 +19,23 @@ jobs:
         with:
           php-version: '7.4'
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test Go backend
+        run: go test -race ./...
+
+      - name: Test voucher validity and traffic
+        run: |
+          php tests/test_onlogin.php
+          php tests/test_users_status.php
+          node tests/test_traffic.js
+
       - name: Validate PHP Syntax
         run: |
-          find . -name "*.php" ! -path "./portal/*" ! -path "./vendor/*" ! -path "./data/*" -exec php -l {} +
+          find . -name "*.php" ! -path "./portal/*" ! -path "./vendor/*" ! -path "./data/*" -exec php -l {} \;
 
   deploy:
     name: Deploy to VPS
@@ -41,13 +55,15 @@ jobs:
             if [ "$REF_NAME" = "main" ]; then
               echo "==> Deploying to PRODUCTION (/opt/mikhmon-new)..."
               cd /opt/mikhmon-new
-              sudo -n git pull
+              sudo -n git pull --ff-only origin main
+              sudo -n docker compose -f docker-compose.vps.yml up -d --build --no-deps mikhmon-api
               sudo -n docker compose -f docker-compose.vps.yml restart mikhmon-php
               echo "✓ Production deployed successfully"
             else
               echo "==> Deploying to STAGING (/opt/mikhmon-staging)..."
               cd /opt/mikhmon-staging
-              sudo -n git pull
+              sudo -n git pull --ff-only origin feat/portal-mockup
+              sudo -n docker compose -f docker-compose.staging.yml up -d --build --no-deps mikhmon-staging-api
               sudo -n docker compose -f docker-compose.staging.yml restart mikhmon-staging-php
               echo "✓ Staging deployed successfully"
             fi

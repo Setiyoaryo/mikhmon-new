@@ -134,188 +134,20 @@ date_default_timezone_set(empty($_SESSION['timezone']) ? 'Asia/Jakarta' : $_SESS
 			fclose($handle);
 		}
 
-		/* Kumpulkan username yang sudah ada di router. Tanpa ini, username
-		 * voucher yang kebetulan sama dengan user lama akan ditolak RouterOS
-		 * (voucher itu tidak terbuat) dan tidak muncul di daftar cetak. */
-		$used_names = array();
-		$existing_users = $API->comm("/ip/hotspot/user/print", array(".proplist" => "name"));
-		if (is_array($existing_users)) {
-			foreach ($existing_users as $eu) {
-				if (isset($eu['name']) && $eu['name'] !== "") {
-					$used_names[$eu['name']] = true;
-				}
-			}
-		}
-
-		$a = array("1" => "", "", 1, 2, 2, 3, 3, 4);
-
-		if ($user == "up") {
-			$i = 1;
-			$attempt = 0;
-			while ($i <= $qty) {
-				if ($char == "lower") {
-					$u[$i] = randLC($userl);
-				} elseif ($char == "upper") {
-					$u[$i] = randUC($userl);
-				} elseif ($char == "upplow") {
-					$u[$i] = randULC($userl);
-				} elseif ($char == "mix") {
-					$u[$i] = randNLC($userl);
-				} elseif ($char == "mix1") {
-					$u[$i] = randNUC($userl);
-				} elseif ($char == "mix2") {
-					$u[$i] = randNULC($userl);
-				} elseif ($char == "num") {
-					// "num" is only offered in vc mode, but the dropdown keeps it
-					// selected when you switch vc -> up (it merely gets hidden), so
-					// reach it here. Without this branch the username stayed empty,
-					// RouterOS rejected every user, and the reply is not surfaced,
-					// so Generate just looked like it did nothing.
-					$u[$i] = randN($userl);
-				}
-				if ($userl == 3) {
-					$p[$i] = randN(3);
-				} elseif ($userl == 4) {
-					$p[$i] = randN(4);
-				} elseif ($userl == 5) {
-					$p[$i] = randN(5);
-				} elseif ($userl == 6) {
-					$p[$i] = randN(6);
-				} elseif ($userl == 7) {
-					$p[$i] = randN(7);
-				} elseif ($userl == 8) {
-					$p[$i] = randN(8);
-				}
-
-				$u[$i] = "$prefix$u[$i]";
-
-				// Kalau username sudah dipakai (user lama atau voucher lain di
-				// batch ini), ulangi untuk indeks yang sama sampai unik.
-				if (isset($used_names[$u[$i]])) {
-					$attempt++;
-					if ($attempt > 200) { $used_names[$u[$i]] = true; $i++; $attempt = 0; }
-					continue;
-				}
-				$used_names[$u[$i]] = true;
-				$i++;
-				$attempt = 0;
-			}
-
-			$bulkusers = array();
-			for ($i = 1; $i <= $qty; $i++) {
-				// Never send an empty username: RouterOS rejects it and the reply
-				// is not shown anywhere, so Generate would silently do nothing.
-				if (!isset($u[$i]) || $u[$i] === "") {
-					continue;
-				}
-				$u_row = array(
-					"server" => "$server",
-					"name" => "$u[$i]",
-					"password" => "$p[$i]",
-					"profile" => "$profile",
-					"limit-bytes-total" => "$datalimit",
-					"comment" => "$commt",
-				);
-				if ($timelimit !== "") {
-					$u_row["limit-uptime"] = $timelimit;
-				}
-				$bulkusers[] = $u_row;
-			}
-			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
-		}
-
-		if ($user == "vc") {
-			$shuf = ($userl - $a[$userl]);
-			$i = 1;
-			$attempt = 0;
-			while ($i <= $qty) {
-				if ($char == "lower") {
-					$u[$i] = randLC($shuf);
-				} elseif ($char == "upper") {
-					$u[$i] = randUC($shuf);
-				} elseif ($char == "upplow") {
-					$u[$i] = randULC($shuf);
-				}
-				if ($userl == 3) {
-					$p[$i] = randN(1);
-				} elseif ($userl == 4 || $userl == 5) {
-					$p[$i] = randN(2);
-				} elseif ($userl == 6 || $userl == 7) {
-					$p[$i] = randN(3);
-				} elseif ($userl == 8) {
-					$p[$i] = randN(4);
-				}
-
-				$u[$i] = "$prefix$u[$i]$p[$i]";
-
-				if ($char == "num") {
-					if ($userl == 3) {
-						$p[$i] = randN(3);
-					} elseif ($userl == 4) {
-						$p[$i] = randN(4);
-					} elseif ($userl == 5) {
-						$p[$i] = randN(5);
-					} elseif ($userl == 6) {
-						$p[$i] = randN(6);
-					} elseif ($userl == 7) {
-						$p[$i] = randN(7);
-					} elseif ($userl == 8) {
-						$p[$i] = randN(8);
-					}
-
-					$u[$i] = "$prefix$p[$i]";
-				}
-				if ($char == "mix") {
-					$p[$i] = randNLC($userl);
-
-
-					$u[$i] = "$prefix$p[$i]";
-				}
-				if ($char == "mix1") {
-					$p[$i] = randNUC($userl);
-
-
-					$u[$i] = "$prefix$p[$i]";
-				}
-				if ($char == "mix2") {
-					$p[$i] = randNULC($userl);
-
-
-					$u[$i] = "$prefix$p[$i]";
-				}
-
-				// Kalau username sudah dipakai (user lama atau voucher lain di
-				// batch ini), ulangi untuk indeks yang sama sampai unik.
-				if (isset($used_names[$u[$i]])) {
-					$attempt++;
-					if ($attempt > 200) { $used_names[$u[$i]] = true; $i++; $attempt = 0; }
-					continue;
-				}
-				$used_names[$u[$i]] = true;
-				$i++;
-				$attempt = 0;
-			}
-			$bulkusers = array();
-			for ($i = 1; $i <= $qty; $i++) {
-				// Same guard as "up" mode: never send an empty username.
-				if (!isset($u[$i]) || $u[$i] === "") {
-					continue;
-				}
-				$u_row = array(
-					"server" => "$server",
-					"name" => "$u[$i]",
-					"password" => "$u[$i]",
-					"profile" => "$profile",
-					"limit-bytes-total" => "$datalimit",
-					"comment" => "$commt",
-				);
-				if ($timelimit !== "") {
-					$u_row["limit-uptime"] = $timelimit;
-				}
-				$bulkusers[] = $u_row;
-			}
-			$bulkresult = mikhmon_bulk_add_hotspot_users($API, $bulkusers);
-		}
+		// Credentials, uniqueness, and router writes are all owned by Go.
+		$bulkresult = mikhmon_generate_hotspot_users($API, array(
+			'qty' => (int) $qty,
+			'server' => $server,
+			'mode' => $user,
+			'userl' => (int) $userl,
+			'prefix' => $prefix,
+			'char' => $char,
+			'profile' => $profile,
+			'timelimit' => $timelimit,
+			'datalimit' => (int) $datalimit,
+			'comment' => $commt,
+		));
+		$u = array(1 => isset($bulkresult['first_user']) ? $bulkresult['first_user'] : '');
 
 
 		/* Simpan hasil supaya halaman berikutnya bisa menampilkan berapa yang

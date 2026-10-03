@@ -170,8 +170,9 @@ func (p *Pool) discard(c *Client) {
 
 // Exec runs one command sentence, reusing a pooled connection.
 //
-// If the pooled connection turns out to be dead (routers drop idle API
-// sessions), the connection is replaced and the command retried once.
+// Dead pooled connections are replaced and retried once. If a complete
+// mutation was sent but its reply was lost, its outcome is unknown and the
+// command must not be replayed.
 func (p *Pool) Exec(timeout time.Duration, words []string) ([]Sentence, error) {
 	var lastErr error
 
@@ -185,13 +186,17 @@ func (p *Pool) Exec(timeout time.Duration, words []string) ([]Sentence, error) {
 		}
 
 		replies, err := c.RunCommand(words...)
-		if err == nil {
+		if err == nil || (len(replies) > 0 && replies[len(replies)-1].Type() == "!done") {
+			// A fully drained !trap is a router rejection, not a broken socket.
 			p.release(c)
-			return replies, nil
+			return replies, err
 		}
 
 		lastErr = err
 		p.discard(c)
+		if errors.Is(err, errReplyInterrupted) && !canRetryAfterReplyLoss(words) {
+			return replies, fmt.Errorf("command outcome unknown (not retried): %w", err)
+		}
 
 		// A router-side rejection ("!trap" such as "already have user") is a
 		// valid answer, not a broken connection: return it to the caller.
@@ -202,6 +207,29 @@ func (p *Pool) Exec(timeout time.Duration, words []string) ([]Sentence, error) {
 	}
 
 	return nil, lastErr
+}
+
+func canRetryAfterReplyLoss(words []string) bool {
+	if len(words) == 0 {
+		return false
+	}
+	for _, word := range words[1:] {
+		// A print command can also create a file on the router.
+		if strings.HasPrefix(word, "=file=") {
+			return false
+		}
+	}
+	if strings.HasSuffix(words[0], "/print") || strings.HasSuffix(words[0], "/getall") {
+		return true
+	}
+	if words[0] == "/interface/monitor-traffic" {
+		for _, word := range words[1:] {
+			if word == "=once=" || word == "=once=yes" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (p *Pool) shutdown() {

@@ -54,7 +54,13 @@ if (!isset($_SESSION["mikhmon"])) {
 <div class="card-body">
 <?php if (isset($_GET['fixdone'])) { ?>
 <div style="margin:4px 0 10px; padding:10px 14px; border-radius:4px; border-left:4px solid #27ae60; background:#eafaf1;">
-  <b><?= (int) $_GET['fixdone']; ?> profil diperbaiki</b> &mdash; masa aktif voucher tidak lagi terpotong.
+  <b><?= (int) $_GET['fixdone']; ?> script profil diperbarui</b>.
+  <?php if (!empty($_GET['fixmonitor'])) { ?>
+    &middot; <?= (int) $_GET['fixmonitor']; ?> monitor diperbarui.
+  <?php } ?>
+  <?php if (!empty($_GET['fixfail'])) { ?>
+    &middot; <b style="color:#c0392b"><?= (int) $_GET['fixfail']; ?> pembaruan gagal. Periksa koneksi dan izin API router.</b>
+  <?php } ?>
   <?php if (isset($_GET['fixskip']) && (int) $_GET['fixskip'] > 0) { ?>
     &middot; <?= (int) $_GET['fixskip']; ?> dilewati (sudah benar / tidak memakai scheduler).
   <?php } ?>

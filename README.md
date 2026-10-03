@@ -165,6 +165,40 @@ docker compose -f docker-compose.staging.yml up -d --build
 
 ## Manajemen Operasional Harian
 
+### Perbaikan voucher dan traffic
+
+Generate voucher diproses oleh Go (`/v1/generate`), termasuk membaca username
+yang sudah ada langsung dari router. Jika ruang kode pendek penuh, bagian acak
+kode diperpanjang agar voucher tetap unik. Hasil pembuatan melaporkan jumlah
+yang benar-benar berhasil dan gagal, termasuk ketika sesi router tidak valid.
+Jika perintah tambah user sudah terkirim tetapi balasannya terputus, Go
+melaporkan hasil yang belum pasti dan tidak mengulang perintah itu. Periksa
+batch di router sebelum membuat ulang voucher yang dilaporkan gagal.
+
+Traffic memakai sampel Go (`/v1/traffic`) dengan `monitor-traffic once`.
+Grafik menampilkan pesan ketika sampel gagal diambil; data yang tidak tersedia
+tidak diubah menjadi 0 bps. Nama interface dengan spasi atau `&` didukung.
+
+Setelah memasang perubahan, rebuild Go dan restart PHP:
+
+```bash
+docker compose -f docker-compose.vps.yml up -d --build --no-deps mikhmon-api
+docker compose -f docker-compose.vps.yml restart mikhmon-php
+```
+
+Untuk profil yang sudah tersimpan di MikroTik, buka **Hotspot → User Profile →
+Fix Validity**. Tombol ini memperbarui script on-login dan monitor bawaan Mikhmon,
+termasuk script generasi `exp-` sebelumnya. Script khusus yang tidak dikenali
+dilewati. Periksa jumlah berhasil/gagal yang ditampilkan.
+
+**Time Limit** adalah total waktu pemakaian (`limit-uptime`), sedangkan
+**Validity** adalah masa aktif sejak login pertama. Untuk paket 24 jam gunakan
+`24h` atau `1d` pada batas yang dimaksud. Pembaruan script tidak mengembalikan
+voucher yang sudah dihapus atau mengubah tanggal kedaluwarsa yang sebelumnya
+tercatat. Script RouterOS tetap perlu diuji pada router sebenarnya: tes lokal
+menguji protokol Go, integrasi PHP, dan bentuk script, bukan menjalankan mesin
+scripting RouterOS.
+
 ### Menambah Pelanggan Baru (3 Langkah)
 1. **Buat sesi router**: Buka `https://panel.nocify.id` -> *Settings* -> *Add Router*. Isi nama sesi dengan **subdomain** yang diinginkan (huruf kecil, misal `budi`).
 2. **Daftarkan di portal**: Buka `https://control.nocify.id/#/admin` -> *Tambah Pelanggan*. Masukkan nama, nomor WA, dan pilih sesi `budi`.

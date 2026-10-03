@@ -17,6 +17,8 @@ import (
 	"time"
 )
 
+var errReplyInterrupted = errors.New("routeros: reply interrupted")
+
 // Sentence is a single RouterOS reply sentence, e.g.
 //
 //	["!re", "=name=foo", "=.id=*1"]
@@ -295,7 +297,10 @@ func (c *Client) RunCommand(words ...string) ([]Sentence, error) {
 	for {
 		s, err := c.readSentence()
 		if err != nil {
-			return replies, err
+			// The complete command was sent, so a lost reply does not prove
+			// that a mutation failed. Let the pool distinguish it from a dead
+			// socket discovered while sending.
+			return replies, fmt.Errorf("%w: %w", errReplyInterrupted, err)
 		}
 		replies = append(replies, s)
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -315,6 +316,136 @@ func TestGeneratePushesToRouter(t *testing.T) {
 	}
 	if h.mock.UserCount() != 150 {
 		t.Fatalf("expected 150 users on the router, got %d", h.mock.UserCount())
+	}
+}
+
+func TestGenerateRejectsUnknownSession(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	out := h.post(t, "/v1/generate", map[string]any{"session": "expired", "qty": 2}, nil)
+	if out["ok"] != false || out["dry_run"] == true {
+		t.Fatalf("must report failed creation: %v", out)
+	}
+	out = h.post(t, "/v1/generate", map[string]any{"qty": 2}, nil)
+	if out["ok"] != false {
+		t.Fatalf("missing session must not silently become a dry run: %v", out)
+	}
+}
+
+func TestGenerateAvoidsExistingRouterNamesUnderSaturation(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	users := make([]map[string]any, 0, 512)
+	for a := '2'; a <= '9'; a++ {
+		for b := '2'; b <= '9'; b++ {
+			for c := '2'; c <= '9'; c++ {
+				users = append(users, map[string]any{"name": string([]rune{a, b, c}), "password": "used"})
+			}
+		}
+	}
+	h.post(t, "/v1/bulk/user-add", map[string]any{"session": sess, "users": users}, nil)
+	out := h.post(t, "/v1/generate", map[string]any{
+		"session": sess, "qty": 30, "mode": "vc", "char": "num", "userl": 3,
+		"timelimit": "24h", "profile": "default",
+	}, nil)
+	if out["ok"] != true || out["added"] != float64(30) || h.mock.UserCount() != 542 {
+		t.Fatalf("generation must avoid existing credentials: %v, router users=%d", out, h.mock.UserCount())
+	}
+	for _, voucher := range out["vouchers"].([]any) {
+		name := voucher.(map[string]any)["name"].(string)
+		for _, user := range h.mock.Users() {
+			if user.Name == name && user.TimeLimit != "24h" {
+				t.Fatalf("24h limit changed on router: %+v", user)
+			}
+		}
+	}
+}
+
+func TestBulkAddDoesNotReportPartialFailureAsSuccess(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	out := h.post(t, "/v1/bulk/user-add", map[string]any{
+		"session": sess, "users": []map[string]any{{"name": "dup"}, {"name": "dup"}},
+	}, nil)
+	if out["ok"] != false || out["added"] != float64(1) || out["failed"] != float64(1) {
+		t.Fatalf("partial failure must keep actual counts and report failure: %v", out)
+	}
+}
+
+func TestTrafficRejectsMissingSample(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	out := h.post(t, "/v1/traffic", map[string]any{"session": sess, "interface": "missing"}, nil)
+	if out["ok"] != false || out["error"] == nil {
+		t.Fatalf("missing sample must not be shown as zero traffic: %v", out)
+	}
+}
+
+func TestTrafficReturnsNumericRates(t *testing.T) {
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	out := h.post(t, "/v1/traffic", map[string]any{"session": sess, "interface": "WAN & Backup"}, nil)
+	if out["ok"] != true || out["tx"] != float64(123456) || out["rx"] != float64(654321) {
+		t.Fatalf("wrong traffic sample: %v", out)
+	}
+}
+
+func TestPHPGenerateUsesGoAndPreserves24HourLimit(t *testing.T) {
+	if _, err := exec.LookPath("php"); err != nil {
+		t.Skip("PHP unavailable")
+	}
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	cmd := exec.Command("php", "-r", `
+require '../../lib/routeros_api.class.php';
+$api = new RouterosAPI();
+$api->session = $argv[1];
+echo json_encode(mikhmon_generate_hotspot_users($api, array(
+  'qty' => 5, 'mode' => 'vc', 'char' => 'num', 'userl' => 3,
+  'server' => 'all', 'profile' => 'default', 'timelimit' => '24h'
+)));
+`, sess)
+	cmd.Env = append(cmd.Environ(), "MIKHMON_API_URL="+h.srv.URL)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("PHP bridge failed: %v %s", err, raw)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("PHP response: %v %s", err, raw)
+	}
+	if out["added"] != float64(5) || h.mock.UserCount() != 5 {
+		t.Fatalf("wrong generation result: %v", out)
+	}
+	for _, user := range h.mock.Users() {
+		if user.TimeLimit != "24h" {
+			t.Fatalf("PHP/Go bridge changed 24h limit: %+v", user)
+		}
+	}
+}
+
+func TestPHPBulkAddPreservesPartialFailureCounts(t *testing.T) {
+	if _, err := exec.LookPath("php"); err != nil {
+		t.Skip("PHP unavailable")
+	}
+	h := newHarness(t, api.Options{})
+	sess := h.connect(t)
+	cmd := exec.Command("php", "-r", `
+require '../../lib/routeros_api.class.php';
+$api = new RouterosAPI();
+$api->session = $argv[1];
+echo json_encode(mikhmon_bulk_add_hotspot_users($api, array(array('name' => 'dup'), array('name' => 'dup'))));
+`, sess)
+	cmd.Env = append(cmd.Environ(), "MIKHMON_API_URL="+h.srv.URL)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("PHP bridge failed: %v %s", err, raw)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("PHP response: %v %s", err, raw)
+	}
+	if out["added"] != float64(1) || out["failed"] != float64(1) || len(out["errors"].([]any)) != 1 {
+		t.Fatalf("PHP lost partial failure counts: %v", out)
 	}
 }
 

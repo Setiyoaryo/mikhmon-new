@@ -16,54 +16,45 @@
  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 session_start();
-// hide all error
 error_reporting(0);
-if(!isset($_SESSION["mikhmon"])){
-  header("Location:../admin.php?id=login");
-}else{
-// load session MikroTik
-$session = $_GET['session'];
-$interface = $_GET['iface'];
-//echo $interface
-// load config
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
+if (!isset($_SESSION['mikhmon'])) {
+  http_response_code(401);
+  echo json_encode(array('ok' => false, 'error' => 'not authenticated'));
+  exit;
+}
+$session = isset($_GET['session']) && is_string($_GET['session']) ? $_GET['session'] : '';
+$interface = isset($_GET['iface']) && is_string($_GET['iface']) ? $_GET['iface'] : '';
+if ($interface === '' || $interface === 'null' || $session === '') {
+  http_response_code(400);
+  echo json_encode(array('ok' => false, 'error' => 'missing session or interface'));
+  exit;
+}
 include('../include/config.php');
 include('../include/readcfg.php');
-
-// routeros api
+// Sampling must not block other requests from the same PHP session.
+session_write_close();
 include_once('../lib/routeros_api.class.php');
-include_once('../lib/formatbytesbites.php');
 $API = new RouterosAPI();
 $API->debug = false;
-  
-  if($API->connect( $iphost, $userhost, decrypt($passwdhost))){
-
-//$getinterface = $API->comm("/interface/print");
-    //$interface = $getinterface[$iface-1]['name'];
-    $getinterfacetraffic = $API->comm("/interface/monitor-traffic", array(
-      "interface" => "$interface",
-      "once" => "",
-      ));
-
-    $rows = array(); $rows2 = array();
-
-    $ftx = $getinterfacetraffic[0]['tx-bits-per-second'];
-    $frx = $getinterfacetraffic[0]['rx-bits-per-second'];
-
-      $rows['name'] = 'Tx';
-      $rows['data'][] = $ftx;
-      $rows2['name'] = 'Rx';
-      $rows2['data'][] = $frx;
-      
-  }else{
-		echo "<font color='#ff0000'>Connection Failed!!</font>";
-  }
-  
-  $API->disconnect();
-  
-  $result = array();
-
-	array_push($result,$rows);
-	array_push($result,$rows2);
-  print json_encode($result);
+if (!$API->connect($iphost, $userhost, decrypt($passwdhost))) {
+  http_response_code(502);
+  echo json_encode(array('ok' => false, 'error' => 'router connection failed'));
+  exit;
 }
-?>
+$sample = mikhmon_api_post('/v1/traffic', array(
+  'session' => $API->session,
+  'interface' => $interface,
+  'timeout_ms' => max(1000, (int) $API->timeout * 1000),
+), mikhmon_api_exec_timeout());
+$API->disconnect();
+if (!is_array($sample) || empty($sample['ok']) || !isset($sample['tx'], $sample['rx'])) {
+  http_response_code(502);
+  echo json_encode(array('ok' => false, 'error' => 'traffic sample unavailable'));
+  exit;
+}
+echo json_encode(array(
+  array('name' => 'Tx', 'data' => array((int) $sample['tx'])),
+  array('name' => 'Rx', 'data' => array((int) $sample['rx'])),
+));

@@ -58,9 +58,9 @@ if (!isset($_SESSION["mikhmon"])) {
         $ol = isset($p['on-login']) ? $p['on-login'] : '';
         if ($ol === '') {
           $cls = 'KOSONG';
-        } elseif (strpos($ol, '$schname') !== false) {
+        } elseif (strpos($ol, ':local firstexp') !== false) {
           $cls = 'BARU';
-        } elseif (strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false) {
+        } elseif (strpos($ol, '$schname') !== false || strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false) {
           $cls = 'LAMA';
         } else {
           $cls = 'LAIN';
@@ -107,24 +107,60 @@ if (!isset($_SESSION["mikhmon"])) {
   }
 
   $fixed = 0;
+  $failed = 0;
   if (!empty($updates)) {
     $result = mikhmon_bulk_profile_onlogin_set($API, $updates);
     if (!empty($result['backend'])) {
       $fixed = (int) $result['updated'];
+      $failed = (int) $result['failed'];
     } else {
       // Backend Go tidak terjangkau: pakai jalur lama, satu per satu, supaya
       // tombol ini tetap bekerja walau service sedang mati.
       foreach ($updates as $u) {
-        $API->comm("/ip/hotspot/user/profile/set", array(
+        $API->error_str = '';
+        $reply = $API->comm("/ip/hotspot/user/profile/set", array(
           ".id"      => $u['id'],
           "on-login" => $u['onlogin'],
         ));
-        $fixed++;
+        if (isset($reply['!trap']) || isset($reply['!fatal']) || $API->error_str !== '') {
+          $failed++;
+        } else {
+          $fixed++;
+        }
       }
     }
   }
 
+  // Upgrade only recognized Mikhmon profile monitors. Run their writes through
+  // Go as a batch as well, including monitors whose on-login was already fixed.
+  $profileNames = array();
+  foreach ((array) $getprofile as $prof) {
+    if (isset($prof['name'])) { $profileNames[$prof['name']] = true; }
+  }
+  $schedulers = $API->comm('/system/scheduler/print', array('.proplist' => '.id,name,on-event'));
+  $monitorCommands = array();
+  foreach ((array) $schedulers as $scheduler) {
+    if (!isset($scheduler['.id'], $scheduler['name'], $scheduler['on-event']) || !isset($profileNames[$scheduler['name']])) { continue; }
+    $event = mikhmon_monitor_upgrade($scheduler['on-event']);
+    if ($event !== $scheduler['on-event']) {
+      $monitorCommands[] = array('/system/scheduler/set', '=.id=' . $scheduler['.id'], '=on-event=' . $event);
+    }
+  }
+  $monitorsFixed = 0;
+  if ($monitorCommands) {
+    $response = mikhmon_api_post('/v1/exec', array(
+      'session' => $API->session,
+      'sentences' => $monitorCommands,
+      'timeout_ms' => max(1000, (int) $API->timeout * 1000),
+    ), mikhmon_api_exec_timeout());
+    $results = is_array($response) && !empty($response['ok']) && isset($response['results']) ? $response['results'] : array();
+    foreach ($results as $res) {
+      if (empty($res['error']) && !empty($res['sentences'])) { $monitorsFixed++; }
+    }
+    $failed += count($monitorCommands) - $monitorsFixed;
+  }
+
   echo "<script>window.location='./?hotspot=user-profiles&fixdone=" . (int) $fixed
-    . "&fixskip=" . (int) $skipped . "&session=" . $session . "'</script>";
+    . "&fixskip=" . (int) $skipped . "&fixmonitor=" . $monitorsFixed . "&fixfail=" . $failed . "&session=" . $session . "'</script>";
 }
 ?>

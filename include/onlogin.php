@@ -37,6 +37,11 @@
  */
 
 if (!function_exists('mikhmon_onlogin_sched_head')) {
+  function mikhmon_onlogin_iso_clock()
+  {
+    return ':if ([:len $date] = 10) do={ :set year [:pick $date 0 4]; :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :local mi ([:tonum [:pick $date 5 7]] - 1); :set month ($ma->$mi); }; ';
+  }
+
   /*
    * Awal blok scheduler: baca comment user, pastikan hanya untuk voucher/member,
    * siapkan tanggal & jam login, lalu buat scheduler sesaat dengan nama unik.
@@ -53,6 +58,7 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       . ':local time [ /system clock get time ]; '
       . ':local year [ :pick $date 7 11 ]; '
       . ':local month [ :pick $date 0 3 ]; '
+      . mikhmon_onlogin_iso_clock()
       /* Nama unik, supaya tidak bentrok dengan scheduler monitor profil. */
       . ':local schname ("exp-" . $user); '
       /* Bersihkan sisa scheduler bernama sama dari login sebelumnya yang gagal. */
@@ -72,23 +78,31 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
    */
   function mikhmon_onlogin_sched_tail()
   {
-    return ':local exp [ /sys sch get [ /sys sch find where name=$schname ] next-run]; '
+    // At creation, next-run may still be the initial execution at login time.
+    // A past start-time may already give the correct next interval, even with
+    // run-count=0. Compare next-run itself rather than requiring an execution.
+    return ':local schid [ /sys sch find where name=$schname ]; '
+      . ':local firstexp ("$date $time"); '
+      . ':local exp [ /sys sch get $schid next-run]; '
       . ':local tries 0; '
-      . ':while ($exp = "" and $tries < 8) do={ :delay 1s; :set exp [ /sys sch get [ /sys sch find where name=$schname ] next-run]; :set tries ($tries + 1); }; '
+      . ':while (($exp = "" or $exp = $time or $exp = $firstexp or $exp = ([:pick $date 0 6] . " " . $time)) and $tries < 8) do={ :delay 1s; :set exp [ /sys sch get $schid next-run]; :set tries ($tries + 1); }; '
+      . ':if ($exp = "" or $exp = $time or $exp = $firstexp or $exp = ([:pick $date 0 6] . " " . $time)) do={ /sys sch remove $schid; :error "Mikhmon expiry scheduler not ready"; }; '
       . ':local el [len $exp]; '
       . ':if ($el > 0) do={ '
       /* Jam saja (mis. "01:30:11") berarti kadaluarsa hari ini. */
-      . ':if ([:find $exp "/"] < 0 and [:find $exp "-"] < 0) do={ '
-      . '/ip hotspot user set comment="$date $exp" [find where name="$user"]; '
+      . ':if ($el = 8) do={ '
+      . ':local cdate $date; '
+      . ':if ([:len $date] = 10) do={ :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :local mi ([:tonum [:pick $date 5 7]] - 1); :local cm ($ma->$mi); :local cd [:pick $date 8 10]; :local cy [:pick $date 0 4]; :set cdate ("$cm/$cd/$cy"); }; '
+      . '/ip hotspot user set comment="$cdate $exp" [find where name="$user"]; '
       . '} else={ '
       . ':local sp [:find $exp " "]; '
       . ':local dpart $exp; '
       . ':local tpart "00:00:00"; '
-      . ':if ($sp >= 0) do={ :set dpart [:pic $exp 0 $sp]; :set tpart [:pick $exp ($sp + 1) [:len $exp]]; }; '
+      . ':if ([:typeof $sp] != "nil") do={ :set dpart [:pic $exp 0 $sp]; :set tpart [:pick $exp ($sp + 1) [:len $exp]]; }; '
       . ':local mpart ""; '
       . ':local dp ""; '
       . ':local yp $year; '
-      . ':if ([:find $dpart "-"] >= 0) do={ '
+      . ':if ([:pick $dpart 4 5] = "-") do={ '
       /* ISO: YYYY-MM-DD -> ubah nomor bulan jadi nama bulan. */
       . ':local mn [:tonum [:pic $dpart 5 7]]; '
       . ':local ma ( "jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec" ); '
@@ -100,7 +114,7 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       /* MMM/DD atau MMM/DD/YYYY. */
       . ':set mpart [:pic $dpart 0 3]; '
       . ':set dp [:pic $dpart 4 6]; '
-      . ':if ([:len $dpart] > 7) do={ :set yp [:pic $dpart 7 11]; }; '
+      . ':if ([:len $dpart] > 7) do={ :set yp [:pic $dpart 7 11]; } else={ :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :if ([:find $ma $mpart] < [:find $ma $month]) do={ :set yp ([:tonum $year] + 1); }; }; '
       . '}; '
       . '/ip hotspot user set comment="$mpart/$dp/$yp $tpart" [find where name="$user"]; '
       . '}; '
@@ -177,6 +191,18 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       . '/sys sch remove [find where name="$user"]';
   }
 
+  // Profile monitors parse comments as MMM/DD/YYYY. Newer routers expose the
+  // system clock as YYYY-MM-DD; preserve the legacy parser for old comments.
+  function mikhmon_monitor_upgrade($script)
+  {
+    $prefix = ':local dateint do={:local montharray';
+    if (strpos($script, $prefix) !== 0 || strpos($script, '/ip hotspot user find where profile=') === false) {
+      return $script;
+    }
+    $iso = ':if ([:pick $d 4 5] = "-") do={:return [:tonum ([:pick $d 0 4] . [:pick $d 5 7] . [:pick $d 8 10])];};';
+    return str_replace($prefix, ':local dateint do={' . $iso . ':local montharray', $script);
+  }
+
   /*
    * Naikkan satu script on-login lama ke format scheduler terkini.
    *
@@ -201,8 +227,18 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
     }
 
     // Sudah memakai format terkini? Tidak perlu apa-apa.
-    if (strpos($onlogin, 'start-time=$time') !== false && strpos($onlogin, '$schname') !== false) {
+    if (strpos($onlogin, 'start-time=$time') !== false && strpos($onlogin, '$schname') !== false && strpos($onlogin, ':local firstexp') !== false) {
       return array('onlogin' => $onlogin, 'changed' => false);
+    }
+
+    // Replace only the known generated head/tail. Preserve custom recording,
+    // MAC locking and the metadata prefix verbatim.
+    if (strpos($onlogin, '$schname') !== false
+        && preg_match('/\{:local comment .*?\/sys sch add name=\$schname disable=no start-date=\$date start-time=\$time interval="([^"]+)"; /s', $onlogin, $head)
+        && preg_match('/:local exp \[ \/sys sch get \[ \/sys sch find where name=\$schname \] next-run\]; .*?\/sys sch remove \[find where name=\$schname\]/s', $onlogin, $tail)) {
+      $new = str_replace($head[0], mikhmon_onlogin_sched_head($head[1]), $onlogin);
+      $new = str_replace($tail[0], mikhmon_onlogin_sched_tail(), $new);
+      return array('onlogin' => $new, 'changed' => true);
     }
 
     // (A) Format scheduler lama: tambal sempit tanpa menyentuh harga/record/lock.
@@ -237,6 +273,11 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
         $new = str_replace(
           '/sys sch add name="$user" disable=no',
           ':local schname ("exp-" . $user); /sys sch remove [find where name=$schname]; /sys sch add name=$schname disable=no',
+          $new
+        );
+        $new = str_replace(
+          ':local month [ :pick $date 0 3 ];',
+          ':local month [ :pick $date 0 3 ]; ' . mikhmon_onlogin_iso_clock(),
           $new
         );
       }

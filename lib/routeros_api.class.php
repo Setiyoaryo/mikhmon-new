@@ -761,6 +761,31 @@ function mikhmon_api_error($response)
     return 'mikhmon-api backend unreachable at ' . mikhmon_api_base();
 }
 
+/** Generate voucher credentials and create users in the Go service. */
+function mikhmon_generate_hotspot_users($API, $options)
+{
+    $total = max(1, min(100000, (int) $options['qty']));
+    if (!is_object($API) || empty($API->session)) {
+        return array('ok' => false, 'total' => $total, 'added' => 0, 'failed' => $total, 'errors' => array('not connected'));
+    }
+    $options['qty'] = $total;
+    $options['userl'] = (int) $options['userl'];
+    $options['datalimit'] = isset($options['datalimit']) ? (int) $options['datalimit'] : 0;
+    $options['session'] = $API->session;
+    $options['concurrency'] = (int) mikhmon_api_env('MIKHMON_API_CONCURRENCY', 16);
+    $options['timeout_ms'] = max(1000, ((int) $API->timeout) * 1000);
+    $response = mikhmon_api_post('/v1/generate', $options, mikhmon_api_bulk_timeout());
+    // A partial failure still contains useful, authoritative counts. Keep it
+    // so the UI can report what was created and offer printing of that batch.
+    if (is_array($response) && isset($response['added'], $response['failed'])) {
+        if (!empty($response['error'])) {
+            $response['errors'] = array($response['error']);
+        }
+        return $response;
+    }
+    return array('ok' => false, 'total' => $total, 'added' => 0, 'failed' => $total, 'errors' => array(mikhmon_api_error($response)));
+}
+
 /**
  * Create many hotspot users in parallel.
  *
@@ -815,7 +840,7 @@ function mikhmon_bulk_add_hotspot_users($API, $users, $concurrency = 0)
         'timeout_ms'  => max(1000, ((int) $API->timeout) * 1000),
     ), mikhmon_api_bulk_timeout());
 
-    if (!is_array($response) || empty($response['ok'])) {
+    if (!is_array($response) || !isset($response['added'], $response['failed'])) {
         return array(
             'total'  => $total,
             'added'  => 0,

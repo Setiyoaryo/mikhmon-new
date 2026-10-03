@@ -217,22 +217,7 @@ func (m *Manager) ExecBatch(sessionID string, concurrency int, timeout time.Dura
 		go func() {
 			defer wg.Done()
 			for i := range idx {
-				c, aerr := pool.acquire()
-				if aerr != nil {
-					errs[i] = aerr
-					continue
-				}
-				if timeout > 0 {
-					c.SetTimeout(timeout)
-				}
-				r, rerr := c.RunCommand(cmds[i]...)
-				replies[i] = r
-				if rerr != nil {
-					pool.discard(c)
-					errs[i] = rerr
-					continue
-				}
-				pool.release(c)
+				replies[i], errs[i] = pool.Exec(timeout, cmds[i])
 			}
 		}()
 	}

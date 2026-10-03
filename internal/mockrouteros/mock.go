@@ -20,13 +20,14 @@ import (
 
 // User is one hotspot user stored by the mock.
 type User struct {
-	ID      string
-	Name    string
-	Pass    string
-	Server  string
-	Profile string
-	Uptime  string
-	Comment string
+	ID        string
+	Name      string
+	Pass      string
+	Server    string
+	Profile   string
+	Uptime    string
+	TimeLimit string
+	Comment   string
 }
 
 // Options configures the mock server.
@@ -216,6 +217,16 @@ func (s *Server) handleCommand(conn net.Conn, words []string) {
 	case "/ip/hotspot/print":
 		_ = write(conn, "!re", "=.id=*1", "=name=all")
 		_ = write(conn, "!done")
+	case "/interface/print":
+		_ = write(conn, "!re", "=.id=*1", "=name=WAN & Backup")
+		_ = write(conn, "!done")
+	case "/interface/monitor-traffic":
+		if attr(words, "interface") != "WAN & Backup" || !hasQuery(words, "once") {
+			_ = write(conn, "!trap", "=message=unknown interface or missing once")
+		} else {
+			_ = write(conn, "!re", "=name=WAN & Backup", "=tx-bits-per-second=123456", "=rx-bits-per-second=654321")
+		}
+		_ = write(conn, "!done")
 	case "/system/identity/print":
 		_ = write(conn, "!re", "=name=mock-router")
 		_ = write(conn, "!done")
@@ -254,13 +265,14 @@ func (s *Server) cmdUserAdd(conn net.Conn, words []string) {
 	}
 	s.seq++
 	s.users[name] = User{
-		ID:      "*" + strconv.Itoa(s.seq),
-		Name:    name,
-		Pass:    attr(words, "password"),
-		Server:  attr(words, "server"),
-		Profile: attr(words, "profile"),
-		Uptime:  "0s",
-		Comment: attr(words, "comment"),
+		ID:        "*" + strconv.Itoa(s.seq),
+		Name:      name,
+		Pass:      attr(words, "password"),
+		Server:    attr(words, "server"),
+		Profile:   attr(words, "profile"),
+		Uptime:    "0s",
+		TimeLimit: attr(words, "limit-uptime"),
+		Comment:   attr(words, "comment"),
 	}
 	s.mu.Unlock()
 
@@ -309,6 +321,7 @@ func (s *Server) cmdUserPrint(conn net.Conn, words []string) {
 			"=password="+u.Pass,
 			"=profile="+u.Profile,
 			"=uptime="+u.Uptime,
+			"=limit-uptime="+u.TimeLimit,
 			"=bytes-in=0",
 			"=bytes-out=0",
 			"=comment="+u.Comment,

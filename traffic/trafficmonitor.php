@@ -26,7 +26,14 @@ if (!isset($_SESSION["mikhmon"])) {
 }
 ?>
 <script>
-   var _0x381f=["\x63\x68\x61\x6E\x67\x65","\x76\x61\x6C","\x49\x6E\x74\x65\x72\x66\x61\x63\x65\x5F","\x76\x61\x6C\x75\x65","\x4D\x69\x6B\x68\x6D\x6F\x6E\x53\x65\x73\x73\x69\x6F\x6E","\x67\x65\x74\x45\x6C\x65\x6D\x65\x6E\x74\x42\x79\x49\x64","\x75\x6E\x64\x65\x66\x69\x6E\x65\x64","\x73\x65\x74\x49\x74\x65\x6D","\x50\x6C\x65\x61\x73\x65\x20\x75\x73\x65\x20\x47\x6F\x6F\x67\x6C\x65\x20\x43\x68\x72\x6F\x6D\x65","\x72\x65\x6C\x6F\x61\x64","\x6C\x6F\x63\x61\x74\x69\x6F\x6E","\x6F\x6E","\x23\x64\x5F\x69\x6E\x74\x65\x72\x66\x61\x63\x65"];$(function(){$(_0x381f[12])[_0x381f[11]](_0x381f[0],function(){var _0xd273x1=$(this)[_0x381f[1]]();var _0xd273x2=_0x381f[2]+ document[_0x381f[5]](_0x381f[4])[_0x381f[3]];if(_0xd273x1){if( typeof (Storage)!== _0x381f[6]){sessionStorage[_0x381f[7]](_0xd273x2,_0xd273x1)}else {alert(_0x381f[8])};window[_0x381f[10]][_0x381f[9]]()};return false})})
+  $(function () {
+    $('#d_interface').on('change', function () {
+      var selected = $(this).val();
+      if (interfaceNames.indexOf(selected) < 0) { return; }
+      try { sessionStorage.setItem('Interface_' + sessiondata, selected); } catch (e) {}
+      window.location.reload();
+    });
+  });
 </script>
           <div class="card">
             <div class="card-header"><h3><i class="fa fa-area-chart"></i> <?= $_traffic_monitor ?> </h3></div>
@@ -34,7 +41,7 @@ if (!isset($_SESSION["mikhmon"])) {
               <div class="card-body">
                 <div class="row">
                   <?php $getinterface = $API->comm("/interface/print");
-                  $interface = $getinterface[$iface - 1]['name'];
+                  $interface = isset($getinterface[$iface - 1]['name']) ? $getinterface[$iface - 1]['name'] : (isset($getinterface[0]['name']) ? $getinterface[0]['name'] : '');
                   $TotalReg = count($getinterface);
 
                   ?>
@@ -43,35 +50,27 @@ if (!isset($_SESSION["mikhmon"])) {
                     <option><?= $_select_interface ?></option>
                     <?php 
                       for ($i = 0; $i < $TotalReg; $i++) {
-                        echo '<option value="' . $getinterface[$i]['name'] . '">['.($i+1).'] ' . $getinterface[$i]['name'] . '</option>';
+                        $iname = htmlspecialchars($getinterface[$i]['name'], ENT_QUOTES, 'UTF-8');
+                        echo '<option value="' . $iname . '">['.($i+1).'] ' . $iname . '</option>';
                     }
                     ?>
                   </select>
                   </div>
+                  <script src="./js/traffic.js"></script>
                   <script type="text/javascript"> 
                     var chart;
-                    var sessiondata = "<?= $session ?>";
+                    var sessiondata = <?= json_encode($session, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+                    var interfaceNames = <?= json_encode(array_values(array_column($getinterface, 'name')), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+                    var interface = <?= json_encode($interface, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+                    try {
+                      var savedInterface = sessionStorage.getItem('Interface_' + sessiondata);
+                      if (interfaceNames.indexOf(savedInterface) >= 0) { interface = savedInterface; }
+                    } catch (e) { /* Storage may be unavailable. Use the configured interface. */ }
+                    $('#d_interface').val(interface);
 
-                    function requestDatta(session,iface) {
-                      $.ajax({
-                        url: './traffic/traffic.php?session='+session+'&iface='+iface,
-                        datatype: "json",
-                        success: function(data) {
-                          var midata = JSON.parse(data);
-                          if( midata.length > 0 ) {
-                            var TX=parseInt(midata[0].data);
-                            var RX=parseInt(midata[1].data);
-                            var x = (new Date()).getTime(); 
-                            shift=chart.series[0].data.length > 19;
-                            chart.series[0].addPoint([x, TX], true, shift);
-                            chart.series[1].addPoint([x, RX], true, shift);
-                          }
-                        },
-                        error: function(XMLHttpRequest, textStatus, errorThrown) { 
-                          console.error("Status: " + textStatus + " request: " + XMLHttpRequest); console.error("Error: " + errorThrown); 
-                        }       
-                      });
-                    }	
+                    function requestDatta(session, iface) {
+                      mikhmonRequestTraffic(chart, session, iface);
+                    }
 
                     $(document).ready(function() {
                         Highcharts.setOptions({
@@ -101,8 +100,8 @@ if (!isset($_SESSION["mikhmon"])) {
                           type: 'areaspline',
                           events: {
                             load: function () {
+                              mikhmonRequestTraffic(this, sessiondata, interface);
                               setInterval(function () {
-                                var _0xe05e=["\x49\x6E\x74\x65\x72\x66\x61\x63\x65\x5F","\x76\x61\x6C\x75\x65","\x4D\x69\x6B\x68\x6D\x6F\x6E\x53\x65\x73\x73\x69\x6F\x6E","\x67\x65\x74\x45\x6C\x65\x6D\x65\x6E\x74\x42\x79\x49\x64","\x67\x65\x74\x49\x74\x65\x6D"];var sesIface=_0xe05e[0]+ document[_0xe05e[3]](_0xe05e[2])[_0xe05e[1]];var interface=sessionStorage[_0xe05e[4]](sesIface)
                                 requestDatta(sessiondata,interface);
                                 chart.setTitle({ text: '<?= $_interface ?> ' + interface });
                               }, 3000);
@@ -160,4 +159,4 @@ if (!isset($_SESSION["mikhmon"])) {
                   </script>
                   <div class="col-12" id="trafficMonitor"></div>
                 </div>
-              </div>  
+              </div>

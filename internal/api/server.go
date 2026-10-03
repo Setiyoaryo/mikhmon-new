@@ -70,6 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/disconnect", s.handleDisconnect)
 	mux.HandleFunc("/v1/exec", s.handleExec)
 	mux.HandleFunc("/v1/generate", s.handleGenerate)
+	mux.HandleFunc("/v1/traffic", s.handleTraffic)
 	mux.HandleFunc("/v1/bulk/user-add", s.handleBulkUserAdd)
 	mux.HandleFunc("/v1/bulk/remove", s.handleBulkRemove)
 	mux.HandleFunc("/v1/bulk/remove-by-query", s.handleBulkRemoveByQuery)
@@ -328,6 +329,24 @@ func (s *Server) runGenerate(w http.ResponseWriter, req generateRequest) {
 	for _, e := range req.Existing {
 		gen.MarkUsed(e)
 	}
+	if !req.DryRun {
+		if _, err := s.requireSession(req.Session); err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "total": clampQty(req.Qty), "added": 0, "failed": clampQty(req.Qty)})
+			return
+		}
+		// Fetch authoritative names here: clients may have stale caches, and a
+		// short numeric credential space can already be completely occupied.
+		replies, err := s.mgr.Exec(req.Session, s.execTimeout(req.TimeoutMS), []string{"/ip/hotspot/user/print", "=.proplist=name"})
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "read existing usernames: " + err.Error(), "total": clampQty(req.Qty), "added": 0, "failed": clampQty(req.Qty)})
+			return
+		}
+		for _, reply := range replies {
+			if reply.Type() == "!re" {
+				gen.MarkUsed(reply.Get("name"))
+			}
+		}
+	}
 
 	vouchers := gen.Batch(generator.BatchOptions{
 		Qty:        clampQty(req.Qty),
@@ -342,7 +361,7 @@ func (s *Server) runGenerate(w http.ResponseWriter, req generateRequest) {
 		UserLength: generator.ClampUserLength(req.UserLength),
 	})
 
-	if req.DryRun || req.Session == "" {
+	if req.DryRun {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok":          true,
 			"total":       len(vouchers),
@@ -358,7 +377,6 @@ func (s *Server) runGenerate(w http.ResponseWriter, req generateRequest) {
 	}
 
 	report := s.addVouchers(req.Session, req.Concurrency, s.execTimeout(req.TimeoutMS), vouchers)
-	report["ok"] = true
 	report["duration_ms"] = time.Since(start).Milliseconds()
 	report["vouchers"] = vouchers
 	writeJSON(w, http.StatusOK, report)
@@ -389,7 +407,6 @@ func (s *Server) handleBulkUserAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	report := s.addVouchers(req.Session, req.Concurrency, s.execTimeout(req.TimeoutMS), req.Users)
-	report["ok"] = true
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -453,6 +470,7 @@ func (s *Server) addVouchers(session string, concurrency int, timeout time.Durat
 	}
 
 	return map[string]any{
+		"ok":         added == len(vouchers),
 		"total":      len(vouchers),
 		"added":      added,
 		"failed":     len(vouchers) - added,

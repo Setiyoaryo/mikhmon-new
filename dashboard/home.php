@@ -236,38 +236,22 @@ if (!isset($_SESSION["mikhmon"])) {
               <div class="card-body">
   
                   <?php $getinterface = $API->comm("/interface/print");
-                  $interface = $getinterface[$iface - 1]['name']; 
+                  $interface = isset($getinterface[$iface - 1]['name']) ? $getinterface[$iface - 1]['name'] : (isset($getinterface[0]['name']) ? $getinterface[0]['name'] : '');
                   /*$TotalReg = count($getinterface);
                   for ($i = 0; $i < $TotalReg; $i++) {
                     echo $getinterface[$i]['name'].'<br>';
                   }*/
                   ?>
                   
-                  <script type="text/javascript"> 
+                  <script src="./js/traffic.js"></script>
+                  <script type="text/javascript">
                     var chart;
-                    var sessiondata = "<?= $session ?>";
-                    var interface = "<?= $interface ?>";
+                    var sessiondata = <?= json_encode($session, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
+                    var interface = <?= json_encode($interface, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
                     var n = 3000;
-                    function requestDatta(session,iface) {
-                      $.ajax({
-                        url: './traffic/traffic.php?session='+session+'&iface='+iface,
-                        datatype: "json",
-                        success: function(data) {
-                          var midata = JSON.parse(data);
-                          if( midata.length > 0 ) {
-                            var TX=parseInt(midata[0].data);
-                            var RX=parseInt(midata[1].data);
-                            var x = (new Date()).getTime(); 
-                            shift=chart.series[0].data.length > 19;
-                            chart.series[0].addPoint([x, TX], true, shift);
-                            chart.series[1].addPoint([x, RX], true, shift);
-                          }
-                        },
-                        error: function(XMLHttpRequest, textStatus, errorThrown) { 
-                          console.error("Status: " + textStatus + " request: " + XMLHttpRequest); console.error("Error: " + errorThrown); 
-                        }       
-                      });
-                    }	
+                    function requestDatta(session, iface) {
+                      mikhmonRequestTraffic(chart, session, iface);
+                    }
 
                     $(document).ready(function() {
                         Highcharts.setOptions({
@@ -293,6 +277,8 @@ if (!isset($_SESSION["mikhmon"])) {
                           type: 'areaspline',
                           events: {
                             load: function () {
+                              var loadedChart = this;
+                              mikhmonRequestTraffic(loadedChart, sessiondata, interface);
                               setInterval(function () {
                                 requestDatta(sessiondata,interface);
                               }, 8000);
