@@ -2,124 +2,97 @@
 /*
  * Pembentuk script on-login profil hotspot.
  *
- * Script ini yang menegakkan masa aktif voucher: saat user login, ia membuat
- * scheduler sesaat untuk menghitung waktu kadaluarsa, lalu menyimpan hasilnya
- * di comment user. Scheduler monitor profil (dibuat terpisah di halaman profil)
- * memakai comment itu untuk menghapus / menonaktifkan user yang sudah lewat.
+ * Script ini yang menegakkan masa aktif voucher: saat user login pertama kali,
+ * ia menghitung waktu kadaluarsa (jam login + validity) dan menuliskannya ke
+ * comment user dengan format mmm/dd/yyyy hh:mm:ss diikuti penanda N (notice)
+ * atau X (remove). Scheduler monitor profil membaca comment itu untuk
+ * menghapus / menonaktifkan user yang sudah lewat.
  *
- * Logika ini dulu disalin di dua berkas (hotspot/adduserprofile.php dan
- * hotspot/userprofilebyname.php), sehingga rawan berbeda. Sekarang keduanya
- * memanggil fungsi di sini supaya selalu identik.
+ * PERBAIKAN PENTING (pengganti metode lama)
+ * -----------------------------------------
+ * Versi lama menghitung kadaluarsa dengan cara membuat scheduler sesaat lalu
+ * MEMBACA `next-run` dan mem-parse string-nya berdasarkan posisi karakter.
+ * Cara itu rapuh:
+ *   - format next-run bisa beda antar versi RouterOS (ISO / mmm/dd/yyyy) dan
+ *     bisa time-only atau date-only tanpa jam;
+ *   - kalau next-run belum "siap" dalam 8 detik, script melempar `:error`, dan
+ *     error pada on-login membuat login hotspot kadang gagal (login berulang);
+ *   - asumsi "time-only berarti hari ini" salah untuk login malam yang lewat
+ *     tengah malam, sehingga masa aktif terpotong (3 jam jadi 1 jam).
  *
- * PERBAIKAN PENTING
- * -----------------
- * 1. Scheduler WAJIB diberi start-time=$time. Tanpa itu acuan waktunya bukan
- *    jam login melainkan acuan default scheduler, sehingga masa aktif terpotong:
- *    voucher "1 hari" yang dipakai malam bisa hanya berlaku beberapa jam. Ini
- *    penyebab utama voucher pelanggan "cepat habis".
- *
- * 2. Nama scheduler per-user diberi awalan "exp-" (mis. exp-abc123), TIDAK lagi
- *    sama dengan nama user. Sebelumnya scheduler memakai nama user apa adanya,
- *    sehingga bisa bentrok dengan scheduler monitor profil (yang memakai nama
- *    profil). Bila nama user kebetulan sama dengan nama profil, perintah
- *    /sys sch remove di akhir bisa ikut menghapus scheduler monitor profil dan
- *    mematikan penegakan masa aktif untuk seluruh profil itu.
- *
- * 3. Masa tunggu dihapus. Sebelumnya on-login menahan 2 x 5 detik (10 detik)
- *    sebelum pelanggan bisa memakai internet. Sekarang next-run dibaca langsung,
- *    dan hanya menunggu bila memang belum siap (polling per 1 detik, maks 8).
- *
- * 4. Format next-run dinormalkan. RouterOS v7 mengembalikan next-run dalam
- *    format ISO "2024-06-28 01:30:11", sedangkan monitor profil mengharapkan
- *    "MMM/DD/YYYY HH:MM:SS" (mis. jun/28/2024 01:30:11). Script lama menyimpan
- *    ISO mentah sehingga monitor salah menghitung masa aktif. Sekarang semua
- *    format (ISO, MMM/DD/YYYY, MMM/DD, dan jam saja) diubah ke format monitor.
+ * Sekarang kadaluarsa dihitung langsung dengan aritmetika tanggal/waktu di
+ * dalam script: tidak ada scheduler sesaat, tidak ada parsing next-run, tidak
+ * ada `:error`, dan tidak ada ketergantungan format. Hasilnya deterministik
+ * untuk v6 (mmm/dd/yyyy) maupun v7 (yyyy-mm-dd).
  */
 
-if (!function_exists('mikhmon_onlogin_sched_head')) {
-  function mikhmon_onlogin_iso_clock()
-  {
-    return ':if ([:len $date] = 10) do={ :set year [:pick $date 0 4]; :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :local mi ([:tonum [:pick $date 5 7]] - 1); :set month ($ma->$mi); }; ';
-  }
-
+if (!function_exists('mikhmon_onlogin_body')) {
   /*
-   * Awal blok scheduler: baca comment user, pastikan hanya untuk voucher/member,
-   * siapkan tanggal & jam login, lalu buat scheduler sesaat dengan nama unik.
+   * Blok RouterOS yang membaca jam login, menambahkan validity, lalu menulis
+   * comment kadaluarsa. Blok ini dibuka dengan `{` dan `:if (...) do={` yang
+   * penutupnya disediakan pemanggil (lihat mikhmon_build_onlogin), supaya
+   * record & lock tetap bisa disisipkan di dalam blok yang sama.
    *
-   * @param string $validity masa aktif (sudah disanitasi, mis. "1d")
-   * @return string
-   */
-  function mikhmon_onlogin_sched_head($validity)
-  {
-    return '{:local comment [ /ip hotspot user get [/ip hotspot user find where name="$user"] comment]; '
-      . ':local ucode [:pic $comment 0 2]; '
-      . ':if ($ucode = "vc" or $ucode = "up" or $comment = "") do={ '
-      . ':local date [ /system clock get date ]; '
-      . ':local time [ /system clock get time ]; '
-      . ':local year [ :pick $date 7 11 ]; '
-      . ':local month [ :pick $date 0 3 ]; '
-      . mikhmon_onlogin_iso_clock()
-      /* Nama unik, supaya tidak bentrok dengan scheduler monitor profil. */
-      . ':local schname ("exp-" . $user); '
-      /* Bersihkan sisa scheduler bernama sama dari login sebelumnya yang gagal. */
-      . '/sys sch remove [find where name=$schname]; '
-      . '/sys sch add name=$schname disable=no start-date=$date start-time=$time interval="' . $validity . '"; ';
-  }
-
-  /*
-   * Akhir blok scheduler: tunggu next-run siap (polling singkat), normalkan
-   * formatnya ke MMM/DD/YYYY HH:MM:SS, tulis ke comment user, lalu hapus
-   * scheduler sesaat.
-   *
-   * Dipakai bersama oleh pembuat script (fungsi ini) dan oleh tool migrasi
-   * profil lama, supaya keduanya selalu menghasilkan blok yang identik.
+   * @param string $validity masa aktif RouterOS (mis. "4h", "1d", "30d")
+   * @param bool   $notice   true untuk mode notice (penanda " N"),
+   *                         false untuk mode remove (penanda " X")
    *
    * @return string
    */
-  function mikhmon_onlogin_sched_tail()
+  function mikhmon_onlogin_body($validity, $notice)
   {
-    // At creation, next-run may still be the initial execution at login time.
-    // A past start-time may already give the correct next interval, even with
-    // run-count=0. Compare next-run itself rather than requiring an execution.
-    return ':local schid [ /sys sch find where name=$schname ]; '
-      . ':local firstexp ("$date $time"); '
-      . ':local exp [ /sys sch get $schid next-run]; '
-      . ':local tries 0; '
-      . ':while (($exp = "" or $exp = $time or $exp = $firstexp or $exp = ([:pick $date 0 6] . " " . $time)) and $tries < 8) do={ :delay 1s; :set exp [ /sys sch get $schid next-run]; :set tries ($tries + 1); }; '
-      . ':if ($exp = "" or $exp = $time or $exp = $firstexp or $exp = ([:pick $date 0 6] . " " . $time)) do={ /sys sch remove $schid; :error "Mikhmon expiry scheduler not ready"; }; '
-      . ':local el [len $exp]; '
-      . ':if ($el > 0) do={ '
-      /* Jam saja (mis. "01:30:11") berarti kadaluarsa hari ini. */
-      . ':if ($el = 8) do={ '
-      . ':local cdate $date; '
-      . ':if ([:len $date] = 10) do={ :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :local mi ([:tonum [:pick $date 5 7]] - 1); :local cm ($ma->$mi); :local cd [:pick $date 8 10]; :local cy [:pick $date 0 4]; :set cdate ("$cm/$cd/$cy"); }; '
-      . '/ip hotspot user set comment="$cdate $exp" [find where name="$user"]; '
-      . '} else={ '
-      . ':local sp [:find $exp " "]; '
-      . ':local dpart $exp; '
-      . ':local tpart "00:00:00"; '
-      . ':if ([:typeof $sp] != "nil") do={ :set dpart [:pic $exp 0 $sp]; :set tpart [:pick $exp ($sp + 1) [:len $exp]]; }; '
-      . ':local mpart ""; '
-      . ':local dp ""; '
-      . ':local yp $year; '
-      . ':if ([:pick $dpart 4 5] = "-") do={ '
-      /* ISO: YYYY-MM-DD -> ubah nomor bulan jadi nama bulan. */
-      . ':local mn [:tonum [:pic $dpart 5 7]]; '
-      . ':local ma ( "jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec" ); '
-      . ':local mi ($mn - 1); '
-      . ':set mpart ($ma->$mi); '
-      . ':set dp [:pic $dpart 8 10]; '
-      . ':set yp [:pic $dpart 0 4]; '
-      . '} else={ '
-      /* MMM/DD atau MMM/DD/YYYY. */
-      . ':set mpart [:pic $dpart 0 3]; '
-      . ':set dp [:pic $dpart 4 6]; '
-      . ':if ([:len $dpart] > 7) do={ :set yp [:pic $dpart 7 11]; } else={ :local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); :if ([:find $ma $mpart] < [:find $ma $month]) do={ :set yp ([:tonum $year] + 1); }; }; '
-      . '}; '
-      . '/ip hotspot user set comment="$mpart/$dp/$yp $tpart" [find where name="$user"]; '
-      . '}; '
-      . '}; '
-      . '/sys sch remove [find where name=$schname]';
+    $flag = $notice ? ' N' : ' X';
+    $val  = (string) $validity;
+
+    $s  = '{:local comment [ /ip hotspot user get [/ip hotspot user find where name="$user"] comment]; ';
+    $s .= ':local ucode [:pic $comment 0 2]; ';
+    /* Hanya voucher/member baru (comment masih kosong / berawalan vc / up). */
+    $s .= ':if ($ucode = "vc" or $ucode = "up" or $comment = "") do={ ';
+    $s .= ':local date [ /system clock get date ]; ';
+    $s .= ':local time [ /system clock get time ]; ';
+    $s .= ':local ma ("jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"); ';
+    $s .= ':local year 0; :local monum 0; :local day 0; ';
+    /* Tanggal router: v7 = ISO "yyyy-mm-dd", v6 = "mmm/dd/yyyy". */
+    $s .= ':if ([:pick $date 4 5] = "-") do={ :set year [:tonum [:pick $date 0 4]]; :set monum [:tonum [:pick $date 5 7]]; :set day [:tonum [:pic $date 8 10]]; } ';
+    $s .= 'else={ :set monum ([:find $ma [:pic $date 0 3]] + 1); :set day [:tonum [:pic $date 4 6]]; :set year [:tonum [:pic $date 7 11]]; }; ';
+    $s .= ':local hh [:tonum [:pic $time 0 2]]; :local mi [:tonum [:pic $time 3 5]]; :local ss [:tonum [:pic $time 6 8]]; ';
+    /* Ubah validity (mis. "4h", "1d2h30m") menjadi total detik. */
+    $s .= ':local val "' . $val . '"; ';
+    $s .= ':local vs 0; :local num ""; :local i 0; ';
+    $s .= ':while ($i < [:len $val]) do={ ';
+    $s .= ':local ch [:pic $val $i ($i+1)]; ';
+    $s .= ':if ([:typeof [:find "0123456789" $ch]] != "nil") do={ :set num ($num . $ch); } ';
+    $s .= 'else={ :local n 1; :if ([:len $num] > 0) do={ :set n [:tonum $num]; }; ';
+    $s .= ':if ($ch = "d") do={ :set vs ($vs + $n*86400); }; ';
+    $s .= ':if ($ch = "h") do={ :set vs ($vs + $n*3600); }; ';
+    $s .= ':if ($ch = "m") do={ :set vs ($vs + $n*60); }; ';
+    $s .= ':if ($ch = "s") do={ :set vs ($vs + $n); }; ';
+    $s .= ':if ($ch = "w") do={ :set vs ($vs + $n*604800); }; :set num ""; }; ';
+    $s .= ':set i ($i+1); }; ';
+    /* Tambahkan detik ke jam login, pisahkan kelebihan ke hari/jam/menit
+     * (pakai pengurangan integer; hindari :floor yang tidak terdokumentasi). */
+    $s .= ':local tot ($hh*3600 + $mi*60 + $ss + $vs); ';
+    $s .= ':local ad 0; :while ($tot >= 86400) do={ :set tot ($tot - 86400); :set ad ($ad + 1); }; ';
+    $s .= ':local nh 0; :while ($tot >= 3600) do={ :set tot ($tot - 3600); :set nh ($nh + 1); }; ';
+    $s .= ':local nmn 0; :while ($tot >= 60) do={ :set tot ($tot - 60); :set nmn ($nmn + 1); }; ';
+    $s .= ':local ns $tot; ';
+    /* Geser tanggal sebanyak kelebihan hari, dengan panjang bulan + kabisat. */
+    $s .= ':local mdays (31,28,31,30,31,30,31,31,30,31,30,31); ';
+    $s .= ':while ($ad > 0) do={ ';
+    $s .= ':local dim ($mdays->($monum-1)); ';
+    $s .= ':if ($monum = 2 and ($year % 4) = 0 and (($year % 100) != 0 or ($year % 400) = 0)) do={ :set dim 29; }; ';
+    $s .= ':set day ($day+1); ';
+    $s .= ':if ($day > $dim) do={ :set day 1; :set monum ($monum+1); :if ($monum > 12) do={ :set monum 1; :set year ($year+1); }; }; ';
+    $s .= ':set ad ($ad-1); }; ';
+    /* Zero-pad dua digit tanpa fungsi khusus. */
+    $s .= ':local pd [:tostr $day]; :if ($day < 10) do={ :set pd ("0" . $pd); }; ';
+    $s .= ':local ph [:tostr $nh]; :if ($nh < 10) do={ :set ph ("0" . $ph); }; ';
+    $s .= ':local pm [:tostr $nmn]; :if ($nmn < 10) do={ :set pm ("0" . $pm); }; ';
+    $s .= ':local ps [:tostr $ns]; :if ($ns < 10) do={ :set ps ("0" . $ps); }; ';
+    /* $month/$year dipakai lagi oleh blok record di belakang. */
+    $s .= ':local month ($ma->($monum-1)); ';
+    $s .= ':ip hotspot user set comment=("$month/$pd/$year $ph:$pm:$ps' . $flag . '") [find where name="$user"]';
+    return $s;
   }
 
   /*
@@ -135,48 +108,48 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
    */
   function mikhmon_build_onlogin($expmode, $price, $validity, $sprice, $lock, $getlock, $record)
   {
-    /* Spasi di dalam durasi membuat /sys sch add gagal, jadi dibuang dulu. */
-    $validity = trim(preg_replace('/\s+/', '', (string) $validity));
+    /* Nilai dari form disisipkan ke dalam script RouterOS. Bersihkan dulu agar
+     * tanda kutip / titik koma / tanda dolar tidak bisa merusak script. Harga
+     * boleh huruf+angka (mis. "free"), durasi memakai angka + unit + titik dua. */
+    $expmode  = preg_replace('/[^a-zA-Z0-9]/', '', (string) $expmode);
+    $price    = preg_replace('/[^a-zA-Z0-9]/', '', (string) $price);
+    $sprice   = preg_replace('/[^a-zA-Z0-9]/', '', (string) $sprice);
+    $getlock  = preg_replace('/[^a-zA-Z]/', '', (string) $getlock);
+    $validity = preg_replace('/[^0-9a-zA-Z:]/', '', preg_replace('/\s+/', '', (string) $validity));
 
     $put = ':put (",' . $expmode . ',' . $price . ',' . $validity . ',' . $sprice . ',,' . $getlock . ',")';
-
-    /* Blok scheduler hanya dibuat kalau masa aktif terisi. Interval kosong
-     * membuat /sys sch add gagal, dan masa aktif tidak akan pernah tercatat. */
-    if ($validity !== '') {
-      $base = $put . '; ' . mikhmon_onlogin_sched_head($validity) . mikhmon_onlogin_sched_tail();
-      $close = '}}';
-    } else {
-      $base = $put;
-      $close = '';
-    }
 
     $onlogin = '';
     $mode = '';
 
-    if ($expmode == "rem") {
-      $onlogin = $base . $lock . $close;
-      $mode = "remove";
-    } elseif ($expmode == "ntf") {
-      $onlogin = $base . $lock . $close;
-      $mode = "set limit-uptime=1s";
-    } elseif ($expmode == "remc") {
-      $onlogin = $base . $record . $lock . $close;
-      $mode = "remove";
-    } elseif ($expmode == "ntfc") {
-      $onlogin = $base . $record . $lock . $close;
-      $mode = "set limit-uptime=1s";
-    } elseif ($expmode == "0" && $price != "") {
+    if ($validity !== '' && in_array($expmode, array('rem', 'ntf', 'remc', 'ntfc'), true)) {
+      $notice = ($expmode === 'ntf' || $expmode === 'ntfc');
+      $base  = $put . '; ' . mikhmon_onlogin_body($validity, $notice);
+      $close = '}}';
+
+      if ($expmode === 'rem') {
+        $onlogin = $base . $lock . $close;
+        $mode = 'remove';
+      } elseif ($expmode === 'ntf') {
+        $onlogin = $base . $lock . $close;
+        $mode = 'set limit-uptime=1s';
+      } elseif ($expmode === 'remc') {
+        $onlogin = $base . $record . $lock . $close;
+        $mode = 'remove';
+      } elseif ($expmode === 'ntfc') {
+        $onlogin = $base . $record . $lock . $close;
+        $mode = 'set limit-uptime=1s';
+      }
+    } elseif ($expmode === '0' && $price != '') {
       $onlogin = ':put (",,' . $price . ',,,noexp,' . $getlock . ',")' . $lock;
-    } else {
-      $onlogin = "";
     }
 
     return array('onlogin' => $onlogin, 'mode' => $mode);
   }
 
   /*
-   * Blok "tail" format scheduler generasi pertama (pra-hardening). Beku: dipakai
-   * sebagai pola pencocokan saat menambal profil lama, jadi JANGAN diubah.
+   * Blok "tail" format scheduler generasi lama (pra-hardening). Beku: dipakai
+   * sebagai penanda pengenalan script lama, jangan diubah.
    *
    * @return string
    */
@@ -189,6 +162,26 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       . ':if ($getxp > 15) do={ /ip hotspot user set comment="$exp" [find where name="$user"];};'
       . ':delay 5s; '
       . '/sys sch remove [find where name="$user"]';
+  }
+
+  /*
+   * Script monitor per-profil: dijalankan scheduler berkala, membaca comment
+   * tiap user profil, dan menghapus / menonaktifkan yang sudah lewat masa
+   * aktif. Satu-satunya sumber untuk tombol Tambah/Edit profil maupun pembuat
+   * monitor otomatis di Fix Validity, supaya semuanya identik.
+   *
+   * @param string $pname nama profil (dipakai untuk filter & nama scheduler)
+   * @param string $mode  "remove" atau "set limit-uptime=1s"
+   *
+   * @return string
+   */
+  function mikhmon_build_monitor($pname, $mode)
+  {
+    $pname = preg_replace('/[^A-Za-z0-9._-]/', '', (string) $pname);
+    if ($mode !== 'set limit-uptime=1s') {
+      $mode = 'remove';
+    }
+    return ':local dateint do={:local montharray ( "jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec" );:local days [ :pick $d 4 6 ];:local month [ :pick $d 0 3 ];:local year [ :pick $d 7 11 ];:local monthint ([ :find $montharray $month]);:local month ($monthint + 1);:if ( [len $month] = 1) do={:local zero ("0");:return [:tonum ("$year$zero$month$days")];} else={:return [:tonum ("$year$month$days")];}}; :local timeint do={ :local hours [ :pick $t 0 2 ]; :local minutes [ :pick $t 3 5 ]; :return ($hours * 60 + $minutes) ; }; :local date [ /system clock get date ]; :local time [ /system clock get time ]; :local today [$dateint d=$date] ; :local curtime [$timeint t=$time] ; :foreach i in [ /ip hotspot user find where profile="' . $pname . '" ] do={ :local comment [ /ip hotspot user get $i comment]; :local name [ /ip hotspot user get $i name]; :local gettime [:pic $comment 12 20]; :if ([:pic $comment 3] = "/" and [:pic $comment 6] = "/") do={:local expd [$dateint d=$comment] ; :local expt [$timeint t=$gettime] ; :if (($expd < $today and $expt < $curtime) or ($expd < $today and $expt > $curtime) or ($expd = $today and $expt < $curtime)) do={ [ /ip hotspot user ' . $mode . ' $i ]; [ /ip hotspot active remove [find where user=$name] ];}}}';
   }
 
   // Profile monitors parse comments as MMM/DD/YYYY. Newer routers expose the
@@ -204,15 +197,12 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
   }
 
   /*
-   * Naikkan satu script on-login lama ke format scheduler terkini.
+   * Naikkan satu script on-login lama ke format hitung-langsung terkini.
    *
-   * Mengembalikan array('onlogin' => string, 'changed' => bool):
-   *   - format scheduler lama  -> ditambal sempit (Tahap 1 & 2);
-   *   - format hitung-sendiri  -> dibangun ulang, prefix :put dipertahankan;
-   *   - sudah baru / tak dikenal -> changed = false (dilewati, tidak ditebak).
-   *
-   * Dipakai oleh tombol "Fix Validity" supaya semua profil memakai format yang
-   * sama, dan supaya aturan ini hanya ada di satu tempat (mudah diuji).
+   * Semua format lama Mikhmon diawali prefix :put (",expmode,price,validity,
+   * sprice,,lock,...). Parameter diambil dari prefix itu, lalu seluruh blok
+   * on-login dibangun ulang dengan pembentuk yang sama seperti profil baru.
+   * Field tambahan di prefix (mis. kode batch) dipertahankan apa adanya.
    *
    * @param string $onlogin script on-login saat ini
    * @param string $pname   nama profil (dipakai di record)
@@ -226,70 +216,14 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       return array('onlogin' => $onlogin, 'changed' => false);
     }
 
-    // Sudah memakai format terkini? Tidak perlu apa-apa.
-    if (strpos($onlogin, 'start-time=$time') !== false && strpos($onlogin, '$schname') !== false && strpos($onlogin, ':local firstexp') !== false) {
+    // Sudah memakai format hitung-langsung terkini? Tidak perlu apa-apa.
+    if (strpos($onlogin, ':local mdays (31,28,') !== false
+        && strpos($onlogin, '[/ip hotspot user find where name="$user"] comment') !== false) {
       return array('onlogin' => $onlogin, 'changed' => false);
     }
 
-    // Replace only the known generated head/tail. Preserve custom recording,
-    // MAC locking and the metadata prefix verbatim.
-    if (strpos($onlogin, '$schname') !== false
-        && preg_match('/\{:local comment .*?\/sys sch add name=\$schname disable=no start-date=\$date start-time=\$time interval="([^"]+)"; /s', $onlogin, $head)
-        && preg_match('/:local exp \[ \/sys sch get \[ \/sys sch find where name=\$schname \] next-run\]; .*?\/sys sch remove \[find where name=\$schname\]/s', $onlogin, $tail)) {
-      $new = str_replace($head[0], mikhmon_onlogin_sched_head($head[1]), $onlogin);
-      $new = str_replace($tail[0], mikhmon_onlogin_sched_tail(), $new);
-      return array('onlogin' => $new, 'changed' => true);
-    }
-
-    // (A) Format scheduler lama: tambal sempit tanpa menyentuh harga/record/lock.
-    if (strpos($onlogin, '/sys sch add') !== false || strpos($onlogin, 'start-date=$date') !== false) {
-      $new = $onlogin;
-
-      // Deklarasikan waktu login sebelum dipakai (kalau belum ada).
-      $new = str_replace(
-        ':local date [ /system clock get date ];:local year',
-        ':local date [ /system clock get date ];:local time [ /system clock get time ];:local year',
-        $new
-      );
-
-      // Pakai jam login sebagai acuan scheduler (inti perbaikan Tahap 1).
-      $new = str_replace(
-        'disable=no start-date=$date interval=',
-        'disable=no start-date=$date start-time=$time interval=',
-        $new
-      );
-
-      // Rapikan script Record.
-      $new = str_replace(
-        ':local time [/system clock get time ]',
-        ':set time [ /system clock get time ]',
-        $new
-      );
-
-      // Tahap 2: upgrade tail dan nama scheduler bersamaan (jangan setengah jalan).
-      $before = $new;
-      $new = str_replace(mikhmon_onlogin_legacy_tail(), mikhmon_onlogin_sched_tail(), $new);
-      if ($new !== $before) {
-        $new = str_replace(
-          '/sys sch add name="$user" disable=no',
-          ':local schname ("exp-" . $user); /sys sch remove [find where name=$schname]; /sys sch add name=$schname disable=no',
-          $new
-        );
-        $new = str_replace(
-          ':local month [ :pick $date 0 3 ];',
-          ':local month [ :pick $date 0 3 ]; ' . mikhmon_onlogin_iso_clock(),
-          $new
-        );
-      }
-
-      return array('onlogin' => $new, 'changed' => ($new !== $onlogin));
-    }
-
-    // (B) Format lama yang menghitung kadaluarsa sendiri (tanpa scheduler).
-    //     Bangun ulang ke format scheduler. Parameter diambil dari prefix
-    //     :put (",expmode,price,validity,sprice,,lock,...). Prefix
-    //     dipertahankan apa adanya supaya field tambahan (mis. kode batch)
-    //     tidak hilang.
+    // Bangun ulang dari prefix :put. Prefix dipertahankan apa adanya supaya
+    // field tambahan (kode batch, versi, dsb.) tidak hilang.
     if (preg_match('/^\s*:put \("(.*?)"\)/', $onlogin, $m)) {
       $f = explode(',', $m[1]);
       $expmode  = isset($f[1]) ? trim($f[1]) : '';
@@ -298,10 +232,9 @@ if (!function_exists('mikhmon_onlogin_sched_head')) {
       $sprice   = isset($f[4]) ? trim($f[4]) : '';
       $getlock  = isset($f[6]) ? trim($f[6]) : '';
 
-      // Spasi di dalam durasi membuat /sys sch add gagal, jadi dibuang.
       $validity = trim(preg_replace('/\s+/', '', $validity));
 
-      if (in_array($expmode, array('rem', 'ntf', 'remc', 'ntfc')) && $validity !== '') {
+      if (in_array($expmode, array('rem', 'ntf', 'remc', 'ntfc'), true) && $validity !== '') {
         $lock = ($getlock == 'Enable')
           ? '; [:local mac $"mac-address"; /ip hotspot user set mac-address=$mac [find where name=$user]]'
           : '';

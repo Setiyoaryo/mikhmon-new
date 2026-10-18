@@ -328,3 +328,24 @@ jawaban terakhir yang tersimpan, dan baru terkunci setelah 7 hari tanpa kabar.
 - Menambah pelanggan baru: buat sesinya di panel dengan nama yang **sama
   persis** dengan subdomain yang diinginkan (huruf kecil), lalu tambahkan
   pelanggannya di portal dengan subdomain yang sama.
+
+## Menerapkan perbaikan masa aktif ke router pelanggan
+
+Perbaikan masa aktif (hitungan kadaluarsa langsung, tanpa parsing `next-run`)
+diterapkan ke profil yang sudah ada lewat tombol panel:
+
+1. Pastikan jam router benar lebih dulu:
+   `/system clock set time-zone-name=Asia/Jakarta` dan
+   `/system ntp client set enabled=yes`.
+2. Buka **Hotspot → User Profile → Fix Validity**. Semua profil Mikhmon yang
+   dikenali akan diperbarui; script khusus yang tak dikenali dilewati.
+3. Periksa laporan konflik monitor:
+   `https://<panel>/process/fixonlogin.php?fix-onlogin=report&session=<nama>`
+   Bagian **SCHEDULER PEMANTAU KADALUARSA** menandai scheduler dari sistem lain
+   sebagai `ASING/LAMA`. **Jalankan hanya satu mesin kadaluarsa** — hapus
+   scheduler asing (mis. `Expire-Monitor`) agar tidak berbenturan dengan monitor
+   profil panel.
+4. Voucher yang sudah beredar dan comment-nya salah tidak otomatis diperbaiki
+   oleh langkah di atas. Hapus/cetak ulang voucher tersebut, atau benahi
+   comment-nya manual (`/ip hotspot user set comment="mmm/dd/yyyy hh:mm:ss X"`).
+

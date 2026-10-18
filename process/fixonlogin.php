@@ -58,9 +58,9 @@ if (!isset($_SESSION["mikhmon"])) {
         $ol = isset($p['on-login']) ? $p['on-login'] : '';
         if ($ol === '') {
           $cls = 'KOSONG';
-        } elseif (strpos($ol, ':local firstexp') !== false) {
+        } elseif (strpos($ol, ':local mdays (31,28,') !== false) {
           $cls = 'BARU';
-        } elseif (strpos($ol, '$schname') !== false || strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false) {
+        } elseif (strpos($ol, '$schname') !== false || strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false || strpos($ol, ':local firstexp') !== false) {
           $cls = 'LAMA';
         } else {
           $cls = 'LAIN';
@@ -69,6 +69,42 @@ if (!isset($_SESSION["mikhmon"])) {
         echo htmlspecialchars($ol) . "\n\n";
       }
     }
+
+    // Deteksi monitor kadaluarsa asing/ganda. Sistem Mikhmon lain (mis.
+    // "Mikhmon Expire Monitor") memasang scheduler sendiri yang juga menghapus
+    // user berdasarkan comment. Kalau berjalan bersamaan dengan monitor profil
+    // dari panel ini, dua mesin bisa saling mendahului dan memotong masa aktif.
+    // Tanda yang dicari khusus aksi kadaluarsa, supaya monitor lain (mis. Live
+    // Report Monitor) tidak ikut dilaporkan.
+    echo "\n\n===== SCHEDULER PEMANTAU KADALUARSA (periksa bentrok) =====\n";
+    $schedulers = $API->comm('/system/scheduler/print');
+    $profileNames = array();
+    foreach ((array) $profiles as $p) {
+      if (isset($p['name'])) { $profileNames[$p['name']] = true; }
+    }
+    $foreign = 0;
+    foreach ((array) $schedulers as $sc) {
+      $sn  = isset($sc['name']) ? $sc['name'] : '(tanpa nama)';
+      $com = isset($sc['comment']) ? $sc['comment'] : '';
+      $ev  = isset($sc['on-event']) ? $sc['on-event'] : '';
+      $isMonitor = (strpos($ev, 'hotspot active remove') !== false)
+        || (strpos($ev, 'limit-uptime=1s') !== false)
+        || (strpos($ev, 'expireMonitor') !== false);
+      if (!$isMonitor) { continue; }
+      // Monitor profil panel ini memakai nama = nama profil. Sisanya = asing.
+      $kind = isset($profileNames[$sn]) ? 'PANEL' : 'ASING/LAMA';
+      if ($kind !== 'PANEL') { $foreign++; }
+      echo "[$kind] name=" . htmlspecialchars($sn)
+        . "  interval=" . htmlspecialchars(isset($sc['interval']) ? $sc['interval'] : '')
+        . "  comment=" . htmlspecialchars($com) . "\n";
+    }
+    echo "\nTotal scheduler pemantau: " . (is_array($schedulers) ? count($schedulers) : 0)
+      . "  |  ASING/LAMA: $foreign\n";
+    if ($foreign > 0) {
+      echo "PERINGATAN: ada $foreign scheduler pemantau kadaluarsa dari sistem lain.\n";
+      echo "Jalankan HANYA satu mesin kadaluarsa. Hapus yang asing agar tidak bentrok.\n";
+    }
+
     echo "</pre>";
     exit;
   }
@@ -160,7 +196,44 @@ if (!isset($_SESSION["mikhmon"])) {
     $failed += count($monitorCommands) - $monitorsFixed;
   }
 
+  // Lengkapi monitor profil yang hilang. Dulu monitor hanya dibuat saat profil
+  // disimpan, jadi profil lama bisa tidak punya monitor sama sekali dan
+  // mengandalkan sistem kadaluarsa pihak ketiga. Sekarang panel memastikan
+  // setiap profil ber-expiry punya monitor sendiri.
+  $existingMonitors = array();
+  foreach ((array) $schedulers as $scheduler) {
+    if (isset($scheduler['name'])) { $existingMonitors[$scheduler['name']] = true; }
+  }
+  $monitorsCreated = 0;
+  foreach ((array) $getprofile as $prof) {
+    $pname   = isset($prof['name']) ? $prof['name'] : '';
+    $onlogin = isset($prof['on-login']) ? $prof['on-login'] : '';
+    if ($pname === '' || $onlogin === '' || isset($existingMonitors[$pname])) { continue; }
+    if (!preg_match('/^\s*:put \("(.*?)"\)/', $onlogin, $m)) { continue; }
+    $f = explode(',', $m[1]);
+    $expmode = isset($f[1]) ? trim($f[1]) : '';
+    if (!in_array($expmode, array('rem', 'ntf', 'remc', 'ntfc'), true)) { continue; }
+    $pmode = ($expmode === 'ntf' || $expmode === 'ntfc') ? 'set limit-uptime=1s' : 'remove';
+    $event = mikhmon_monitor_upgrade(mikhmon_build_monitor($pname, $pmode));
+    $randstarttime = "0" . rand(1, 5) . ":" . rand(10, 59) . ":" . rand(10, 59);
+    $randinterval  = "00:02:" . rand(10, 59);
+    $API->error_str = '';
+    $reply = $API->comm("/system/scheduler/add", array(
+      "name"       => "$pname",
+      "start-time" => "$randstarttime",
+      "interval"   => "$randinterval",
+      "on-event"   => "$event",
+      "disabled"   => "no",
+      "comment"    => "Monitor Profile $pname",
+    ));
+    if (isset($reply['!trap']) || isset($reply['!fatal']) || $API->error_str !== '') {
+      $failed++;
+    } else {
+      $monitorsCreated++;
+    }
+  }
+
   echo "<script>window.location='./?hotspot=user-profiles&fixdone=" . (int) $fixed
-    . "&fixskip=" . (int) $skipped . "&fixmonitor=" . $monitorsFixed . "&fixfail=" . $failed . "&session=" . $session . "'</script>";
+    . "&fixskip=" . (int) $skipped . "&fixmonitor=" . ($monitorsFixed + $monitorsCreated) . "&fixfail=" . $failed . "&session=" . $session . "'</script>";
 }
 ?>

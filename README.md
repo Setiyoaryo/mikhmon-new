@@ -191,6 +191,35 @@ Fix Validity**. Tombol ini memperbarui script on-login dan monitor bawaan Mikhmo
 termasuk script generasi `exp-` sebelumnya. Script khusus yang tidak dikenali
 dilewati. Periksa jumlah berhasil/gagal yang ditampilkan.
 
+### Cara masa aktif dihitung (penting)
+
+Sejak perbaikan terakhir, script on-login **menghitung sendiri** waktu
+kadaluarsa (jam login + validity) dengan aritmetika tanggal, lalu menulisnya ke
+comment user dalam format `mmm/dd/yyyy hh:mm:ss` + penanda `N` (notice) atau `X`
+(remove). Ini menggantikan metode lama yang membuat scheduler sesaat lalu
+membaca dan mem-parse string `next-run` berdasarkan posisi karakter. Metode lama
+rapuh: format `next-run` berbeda antar versi RouterOS, dan bila belum "siap"
+script melempar `:error` yang membuat login hotspot kadang gagal, sementara
+asumsi "time-only berarti hari ini" memotong masa aktif untuk login malam yang
+melewati tengah malam (3 jam menjadi 1 jam).
+
+Format comment baru sengaja dibuat sama dengan yang dipakai sistem Mikhmon lain
+(termasuk "Mikhmon Expire Monitor" berbasis certificate), sehingga bila router
+pelanggan sudah menjalankan monitor kadaluarsa pihak ketiga, keduanya membaca
+nilai yang sama dan tidak saling bertentangan.
+
+> **Jangan menjalankan dua mesin kadaluarsa sekaligus.** Bila di
+> `/system scheduler` ada scheduler pemantau dari sistem lain (mis.
+> `Expire-Monitor`, `Reset-Expire-Monitor`), pilih **satu** saja. Halaman
+> `process/fixonlogin.php?fix-onlogin=report` menampilkan daftar scheduler
+> pemantau beserta penanda `PANEL` / `ASING/LAMA` supaya bentrok mudah dilihat.
+
+Jam router wajib benar sebelum membagikan voucher: set
+`time-zone-name` yang sesuai dan aktifkan NTP. Jika jam pernah melompat
+(mis. timezone diubah atau NTP mengoreksi), comment kadaluarsa voucher lama
+ikut bergeser — jalankan **Fix Validity** dan periksa kembali voucher yang
+masih beredar.
+
 **Time Limit** adalah total waktu pemakaian (`limit-uptime`), sedangkan
 **Validity** adalah masa aktif sejak login pertama. Untuk paket 24 jam gunakan
 `24h` atau `1d` pada batas yang dimaksud. Pembaruan script tidak mengembalikan
