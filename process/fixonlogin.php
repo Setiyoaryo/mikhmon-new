@@ -58,9 +58,9 @@ if (!isset($_SESSION["mikhmon"])) {
         $ol = isset($p['on-login']) ? $p['on-login'] : '';
         if ($ol === '') {
           $cls = 'KOSONG';
-        } elseif (strpos($ol, ':local mdays (31,28,') !== false) {
+        } elseif (strpos($ol, 'start-time=$time interval=') !== false && strpos($ol, '$schname') !== false) {
           $cls = 'BARU';
-        } elseif (strpos($ol, '$schname') !== false || strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false || strpos($ol, ':local firstexp') !== false) {
+        } elseif (strpos($ol, '$schname') !== false || strpos($ol, '/sys sch add') !== false || strpos($ol, 'start-date=$date') !== false || strpos($ol, ':local firstexp') !== false || strpos($ol, ':local mdays') !== false) {
           $cls = 'LAMA';
         } else {
           $cls = 'LAIN';
